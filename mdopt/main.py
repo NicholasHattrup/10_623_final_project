@@ -1,4 +1,4 @@
-from rdkit import Chem, Mol 
+from rdkit import Chem 
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
@@ -7,7 +7,7 @@ import tqdm
 import os
 import argparse
 
-def rdkit_mol_to_ase_atoms(mol : Mol, calculator : OCPCalculator):
+def rdkit_mol_to_ase_atoms(mol : "Mol", calculator : OCPCalculator):
     symbols = []
     coords = []
     for i, atom in enumerate(mol.GetAtoms()):
