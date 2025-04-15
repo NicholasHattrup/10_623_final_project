@@ -34,7 +34,7 @@ def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike):
         cpu=False,
     )
 
-    for name, smiles_str in tqdm(smiles_strs.values()):
+    for name, smiles_str in tqdm(smiles_strs.items()):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
         ase_atoms = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
         ase_optimize_molecule(ase_atoms, outpath, name)
