@@ -3,7 +3,7 @@ from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
 from fairchem.core import OCPCalculator
-import tqdm
+from tqdm import tqdm 
 import os
 import argparse
 

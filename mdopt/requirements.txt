@@ -1,12 +1,14 @@
---index-url https://download.pytorch.org/whl/cu124
---extra-index-url https://pypi.org/simple
+# --index-url https://download.pytorch.org/whl/cu124
+# --extra-index-url https://pypi.org/simple
 
-torch==2.4.0
-torchvision==0.19.0
-torchaudio==2.4.0
+# torch==2.4.0
+# torchvision==0.19.0
+# torchaudio==2.4.0
 
-rdkit
-ase
-fairchem-core
-tqdm
-torch-scatter
+# rdkit
+# ase
+# fairchem-core
+# tqdm
+# torch-scatter
+
+# torch-sparse
