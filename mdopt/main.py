@@ -10,10 +10,10 @@ import argparse
 def rdkit_mol_to_ase_atoms(mol : "Mol", calculator : OCPCalculator):
     symbols = []
     coords = []
-    for i, atom in enumerate(mol.GetAtoms()):
-        pos = mol.GetAtomPosition(i)
+    for i, atom in enumerate(molH.GetAtoms()):
+        pos = molH.GetConformer().GetAtomPosition(i)
         symbols.append(atom.GetSymbol())
-        coords.append((pos.x, pos.y, pos.z))
+        coords.append([pos.x, pos.y, pos.z])
     
     ase_mol = Atoms(symbols=symbols, positions=coords, calculator = calculator)
     return ase_mol
