@@ -26,7 +26,7 @@ def generate_molecule_from_smiles(smiles_str : str):
 
 def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str):
     dyn = LBFGS(mol, trajectory = os.path.join(outpath, mol_name + ".traj"))
-    dyn.run(fmax = 0.05, steps = 200)
+    dyn.run(fmax = 0.05, steps = 500)
 
 def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike):
 
