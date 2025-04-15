@@ -2,6 +2,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
+from ase.calculators.emt import EMT
 from fairchem.core import OCPCalculator
 from tqdm import tqdm 
 import os
@@ -30,11 +31,13 @@ def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str):
 
 def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike):
 
-    calc = OCPCalculator(
-        model_name="EquiformerV2-31M-S2EF-OC20-All+MD",
-        local_cache="pretrained_models",
-        cpu=False,
-    )
+    # calc = OCPCalculator(
+    #     model_name="EquiformerV2-31M-S2EF-OC20-All+MD",
+    #     local_cache="pretrained_models",
+    #     cpu=False,
+    # )
+
+    calc = EMT()
 
     for name, smiles_str in tqdm(smiles_strs.items()):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
