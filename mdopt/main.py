@@ -20,7 +20,9 @@ def rdkit_mol_to_ase_atoms(mol : "Mol", calculator : OCPCalculator):
 
 def generate_molecule_from_smiles(smiles_str : str):
     params = AllChem.ETKDGv3()
-    return AllChem.EmbedMolecule(Chem.AddHs(Chem.MolFromSmiles(smiles_str)), params)
+    mol = Chem.AddHs(Chem.MolFromSmiles(smiles_str))
+    AllChem.EmbedMolecule(mol, params)
+    return mol
 
 def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str):
     dyn = LBFGS(mol, trajectory = os.path.join(outpath, mol_name + ".traj"))
