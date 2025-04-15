@@ -1,0 +1,4 @@
+rdkit
+ase
+fairchem-core
+tqdm
