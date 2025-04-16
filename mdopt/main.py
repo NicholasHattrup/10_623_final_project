@@ -66,9 +66,9 @@ def optimize_molecules(
     # <Converged?> <Initial RMSE from DFT> <Final RMSE from DFT>
     out_data = np.zeros((len(dft_molecules.keys()), 3))
 
-    subset = list(dft_molecules.keys())[:20]
+    # subset = list(dft_molecules.keys())[:20]
 
-    for i, smiles_str in tqdm(enumerate(subset)):
+    for i, smiles_str in tqdm(enumerate(dft_molecules.keys())):
         try:
             rdkit_molecule = generate_molecule_from_smiles(smiles_str)
             ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
