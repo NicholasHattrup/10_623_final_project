@@ -41,7 +41,7 @@ def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike, tol :
         ase_atoms = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
         converge_flags[i] = ase_optimize_molecule(ase_atoms, outpath, name, tol)
 
-    print(f"{len(converge_flags) - sum(converge_flags)} did NOT converge")
+    print(f"{int(len(converge_flags) - sum(converge_flags))} did NOT converge")
 
     return converge_flags
     
@@ -104,7 +104,8 @@ def main():
     converge_flags = optimize_molecules(smiles_strs, args.outpath, args.tol)
 
     np.savetxt(os.path.join(args.outpath, "convergence_flags.txt"),
-                np.column_stack([list(smiles_strs.keys()), converge_flags]))
+                np.column_stack([list(smiles_strs.keys()), converge_flags]),
+                fmt="%s %d")
 
 if __name__ == "__main__":
     main()
