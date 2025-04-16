@@ -70,7 +70,7 @@ def optimize_molecules(
         ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
         initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
         converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
-        final_rmse = optmized_mol.from_ase().rmse(dft_molecules[smiles_str])
+        final_rmse = MyMolecule.from_ase(optmized_mol).rmse(dft_molecules[smiles_str])
 
         out_data[i,:] = [converged, initial_rmse, final_rmse]
 
