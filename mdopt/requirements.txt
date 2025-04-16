@@ -7,8 +7,9 @@
 
 # rdkit
 # ase
-# fairchem-core
 # tqdm
 # torch-scatter
 
 # torch-sparse
+# cuequivariance_torch
+# mace-torch
