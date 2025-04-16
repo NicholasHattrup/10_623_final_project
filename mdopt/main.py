@@ -80,6 +80,7 @@ def parse_molecules(path : os.PathLike):
             z = float(parts[3])
             
             atoms.append((element, x, y, z))
+        i += 1 # skip empty line
         
         entries[smiles] = atoms
     
