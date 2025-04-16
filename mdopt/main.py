@@ -66,14 +66,19 @@ def optimize_molecules(
     # <Converged?> <Initial RMSE from DFT> <Final RMSE from DFT>
     out_data = np.zeros((len(dft_molecules.keys()), 3))
 
-    for i, smiles_str in tqdm(enumerate(dft_molecules.keys())):
-        rdkit_molecule = generate_molecule_from_smiles(smiles_str)
-        ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
-        initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
-        converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
-        final_rmse = MyMolecule.from_ase(optmized_mol).rmse(dft_molecules[smiles_str])
+    subset = list(dft_molecules.keys())[:20]
 
-        out_data[i,:] = [converged, initial_rmse, final_rmse]
+    for i, smiles_str in tqdm(enumerate(subset)):
+        try:
+            rdkit_molecule = generate_molecule_from_smiles(smiles_str)
+            ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
+            initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
+            converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
+            final_rmse = MyMolecule.from_ase(optmized_mol).rmse(dft_molecules[smiles_str])
+            out_data[i,:] = [converged, initial_rmse, final_rmse]
+        except:
+            print(f"Failed for molecule: {smiles_str}")
+            out_data[i,:] = [0.0, np.nan, np.nan]
 
     print(f"{int(len(out_data[:,0]) - sum(out_data[:,0]))} did NOT converge")
 
