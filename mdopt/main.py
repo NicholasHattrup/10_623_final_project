@@ -60,7 +60,7 @@ def optimize_molecules(
     calc = mace_off(model="large", device='cuda')
 
     # <Converged?> <Initial RMSE from DFT> <Final RMSE from DFT>
-    out_data = np.zeros(len(dft_molecules.keys()), 3)
+    out_data = np.zeros((len(dft_molecules.keys()), 3))
 
     for i, smiles_str in tqdm(enumerate(dft_molecules.keys())):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
