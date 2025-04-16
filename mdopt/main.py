@@ -5,6 +5,7 @@ from ase.optimize import LBFGS
 from ase.calculators.emt import EMT
 from mace.calculators import mace_off
 from tqdm import tqdm 
+import numpy as np
 import os
 import argparse
 
@@ -25,18 +26,24 @@ def generate_molecule_from_smiles(smiles_str : str):
     AllChem.EmbedMolecule(mol, params)
     return mol
 
-def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str):
+def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str, fmax : float):
     dyn = LBFGS(mol, trajectory = os.path.join(outpath, mol_name + ".traj"))
-    dyn.run(fmax = 0.05, steps = 500)
+    dyn.run(fmax = fmax, steps = 500)
 
-def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike):
+def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike, tol : float):
 
     calc = mace_off(model="large", device='cuda')
 
-    for name, smiles_str in tqdm(smiles_strs.items()):
+    converge_flags = np.zeros(len(smiles_strs.keys()))
+
+    for i, (name, smiles_str) in tqdm(enumerate(smiles_strs.items())):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
         ase_atoms = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
-        ase_optimize_molecule(ase_atoms, outpath, name)
+        converge_flags[i] = ase_optimize_molecule(ase_atoms, outpath, name)
+
+    print(f"{len(converge_flags) - sum(converge_flags)} did NOT converge")
+
+    return converge_flags
     
 
 def parse_molecules(path : os.PathLike):
@@ -86,14 +93,18 @@ def main():
 
     parser.add_argument("--datapath", "-d", type = str, required = True)
     parser.add_argument("--outpath", "-o", type = str, required = True)
+    parser.add_argument("--tol", "-t", type = float, required = False, default = 0.02)
 
     args = parser.parse_args()
 
-    smiles_strs = parse_molecules(args.datapath)
+    # smiles_strs = parse_molecules(args.datapath)
 
-    smiles = {"methyl", "CC#N"}
+    smiles_strs = {"methyl": "CC#N"}
 
-    optimize_molecules(smiles_strs, args.outpath)
+    converge_flags = optimize_molecules(smiles_strs, args.outpath, args.tol)
+
+    np.savetxt(os.path.join(args.outpath, "convergence_flags.txt"),
+                np.column_stack([list(smiles_strs.keys()), converge_flags]))
 
 if __name__ == "__main__":
     main()
