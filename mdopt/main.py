@@ -9,7 +9,20 @@ import numpy as np
 import os
 import argparse
 
-def rdkit_mol_to_ase_atoms(mol : "Mol", calculator):
+class MyMolecule:
+
+    def __init__(self, symbols : list[str], positions : np.ndarray):
+        self.symbols = symbols
+        self.positions = positions
+    
+    def rmse(self, other : "MyMolecule"):
+        return np.sqrt(np.mean(np.square(self.position - other.position)))
+    
+    def to_ase(self, calculator):
+        return Atoms(symbols=self.symbols, positions=self.positions, calculator = calculator)
+
+
+def rdkit_mol_to_ase_atoms(mol, calculator):
     symbols = []
     coords = []
     for i, atom in enumerate(mol.GetAtoms()):
@@ -18,7 +31,8 @@ def rdkit_mol_to_ase_atoms(mol : "Mol", calculator):
         coords.append([pos.x, pos.y, pos.z])
     
     ase_mol = Atoms(symbols=symbols, positions=coords, calculator = calculator)
-    return ase_mol
+    my_mol = MyMolecule(symbols, np.array(coords))
+    return ase_mol, my_mol
 
 def generate_molecule_from_smiles(smiles_str : str):
     params = AllChem.ETKDGv3()
@@ -26,24 +40,40 @@ def generate_molecule_from_smiles(smiles_str : str):
     AllChem.EmbedMolecule(mol, params)
     return mol
 
-def ase_optimize_molecule(mol : Atoms, outpath : os.PathLike, mol_name : str, fmax : float):
+def ase_optimize_molecule(
+        mol : Atoms,
+        outpath : os.PathLike,
+        mol_name : str, 
+        fmax : float, 
+        maxsteps : int
+    ):
     dyn = LBFGS(mol, trajectory = os.path.join(outpath, mol_name + ".traj"))
-    return dyn.run(fmax = fmax, steps = 500)
+    return dyn.run(fmax = fmax, steps = maxsteps), mol
 
-def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike, tol : float):
+def optimize_molecules(
+        dft_molecules : dict[str,str],
+        outpath : os.PathLike, 
+        tol : float, 
+        maxsteps : int
+    ):
 
     calc = mace_off(model="large", device='cuda')
 
-    converge_flags = np.zeros(len(smiles_strs.keys()))
+    # <Converged?> <Initial RMSE from DFT> <Final RMSE from DFT>
+    out_data = np.zeros(len(dft_molecules.keys()), 3)
 
-    for i, smiles_str in tqdm(enumerate(smiles_strs.keys())):
+    for i, smiles_str in tqdm(enumerate(dft_molecules.keys())):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
-        ase_atoms = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
-        converge_flags[i] = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol)
+        ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
+        initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
+        converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
+        final_rmse = optmized_mol.rmse(dft_molecules[smiles_str])
 
-    print(f"{int(len(converge_flags) - sum(converge_flags))} did NOT converge")
+        out_data[i,:] = [converged, initial_rmse, final_rmse]
 
-    return converge_flags
+    print(f"{int(len(out_data[:,0]) - sum(out_data[:,0]))} did NOT converge")
+
+    return out_data
     
 
 def parse_molecules(path : os.PathLike):
@@ -69,7 +99,8 @@ def parse_molecules(path : os.PathLike):
         i += 1
         
         # Read atom coordinates
-        atoms = []
+        symbols = []
+        coords = []
         for _ in range(num_atoms):
             parts = lines[i].split()
             i += 1
@@ -78,11 +109,11 @@ def parse_molecules(path : os.PathLike):
             x = float(parts[1])
             y = float(parts[2])
             z = float(parts[3])
-            
-            atoms.append((element, x, y, z))
+            symbols.append(element)
+            coords.append([x,y,z])
         i += 1 # skip empty line
         
-        entries[smiles] = atoms
+        entries[smiles] = MyMolecule(symbols, np.array(coords))
     
     return entries
 
@@ -94,19 +125,20 @@ def main():
 
     parser.add_argument("--datapath", "-d", type = str, required = True)
     parser.add_argument("--outpath", "-o", type = str, required = True)
-    parser.add_argument("--tol", "-t", type = float, required = False, default = 0.02)
+    parser.add_argument("--tol", "-t", type = float, required = False, default = 1e-3)
+    parser.add_argument("--maxsteps", "-ms", type = int, required = False, default = 1000)
 
     args = parser.parse_args()
 
-    # smiles_strs = parse_molecules(args.datapath)
+    dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
 
-    smiles_strs = {"methyl": "CC#N"}
+    out_data = optimize_molecules(dft_molecules, args.outpath, args.tol, args.maxsteps)
 
-    converge_flags = optimize_molecules(smiles_strs, args.outpath, args.tol)
-
-    np.savetxt(os.path.join(args.outpath, "convergence_flags.txt"),
-                np.column_stack((list(smiles_strs.keys()), converge_flags)),
-                fmt="%s", delimiter = ",")
+    np.savetxt(
+        os.path.join(args.outpath, "optimization_stats.txt"),
+        np.column_stack((list(dft_molecules.keys()), out_data)),
+        fmt="%s", delimiter = ",", header = "Converged?, Initial RMSE, Final RMSE"
+    )
 
 if __name__ == "__main__":
     main()
