@@ -21,6 +21,7 @@ class MyMolecule:
     def to_ase(self, calculator):
         return Atoms(symbols=self.symbols, positions=self.positions, calculator = calculator)
     
+    @classmethod
     def from_ase(cls, ase_atoms):
         return cls(ase_atoms.symbols, ase_atoms.positions)
 
