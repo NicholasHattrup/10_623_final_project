@@ -16,7 +16,7 @@ class MyMolecule:
         self.positions = positions
     
     def rmse(self, other : "MyMolecule"):
-        return np.sqrt(np.mean(np.square(self.position - other.position)))
+        return np.sqrt(np.mean(np.square(self.positions - other.positions)))
     
     def to_ase(self, calculator):
         return Atoms(symbols=self.symbols, positions=self.positions, calculator = calculator)
