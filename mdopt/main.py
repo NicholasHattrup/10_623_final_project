@@ -104,8 +104,8 @@ def main():
     converge_flags = optimize_molecules(smiles_strs, args.outpath, args.tol)
 
     np.savetxt(os.path.join(args.outpath, "convergence_flags.txt"),
-                np.column_stack([list(smiles_strs.keys()), converge_flags]),
-                fmt="%s %d")
+                np.column_stack((list(smiles_strs.keys()), converge_flags)),
+                fmt="%s", delimiter = ",")
 
 if __name__ == "__main__":
     main()
