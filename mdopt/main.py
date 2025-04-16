@@ -39,7 +39,7 @@ def optimize_molecules(smiles_strs : dict[str,str], outpath : os.PathLike, tol :
     for i, (name, smiles_str) in tqdm(enumerate(smiles_strs.items())):
         rdkit_molecule = generate_molecule_from_smiles(smiles_str)
         ase_atoms = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
-        converge_flags[i] = ase_optimize_molecule(ase_atoms, outpath, name)
+        converge_flags[i] = ase_optimize_molecule(ase_atoms, outpath, name, tol)
 
     print(f"{len(converge_flags) - sum(converge_flags)} did NOT converge")
 
