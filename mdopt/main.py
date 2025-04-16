@@ -20,6 +20,9 @@ class MyMolecule:
     
     def to_ase(self, calculator):
         return Atoms(symbols=self.symbols, positions=self.positions, calculator = calculator)
+    
+    def from_ase(cls, ase_atoms):
+        return cls(ase_atoms.symbols, ase_atoms.positions)
 
 
 def rdkit_mol_to_ase_atoms(mol, calculator):
@@ -67,7 +70,7 @@ def optimize_molecules(
         ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
         initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
         converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
-        final_rmse = optmized_mol.rmse(dft_molecules[smiles_str])
+        final_rmse = optmized_mol.from_ase().rmse(dft_molecules[smiles_str])
 
         out_data[i,:] = [converged, initial_rmse, final_rmse]
 
