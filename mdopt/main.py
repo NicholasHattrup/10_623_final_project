@@ -159,7 +159,9 @@ def main():
     args = parser.parse_args()
 
     dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
-    print(next(iter(dft_molecules)))
+
+    subset = list(dft_molecules.keys())[:10]
+    subset = dft_molecules[subset]
 
     out_data = optimize_molecules(dft_molecules, args.outpath, args.tol, args.maxsteps)
 
