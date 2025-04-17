@@ -2,6 +2,8 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
+from rdkit.Chem import rdMolAlign
+from rdkit.Geometry import Point3D
 from ase.calculators.emt import EMT
 from mace.calculators import mace_off
 from tqdm import tqdm 
@@ -14,9 +16,25 @@ class MyMolecule:
     def __init__(self, symbols : list[str], positions : np.ndarray):
         self.symbols = symbols
         self.positions = positions
+
     
     def rmse(self, other : "MyMolecule"):
-        return np.sqrt(np.mean(np.square(self.positions - other.positions)))
+        return rdMolAlign(self.to_rdkit(), other.to_rdkit())
+    
+    def to_rdkit(self):
+        rw = Chem.RWMol()
+        for s in self.symbols:
+            rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
+
+        # ---- 3.  add a conformer with 3‑D coordinates -------------
+        conf = Chem.Conformer(len(self.symbols))
+        for i, (x, y, z) in enumerate(self.positions):
+            conf.SetAtomPosition(i, Point3D(x, y, z))
+        rw.AddConformer(conf, assignId=True)
+
+        mol = rw.GetMol()
+        Chem.SanitizeMol(mol)  
+        return mol
     
     def to_ase(self, calculator):
         return Atoms(symbols=self.symbols, positions=self.positions, calculator = calculator)
