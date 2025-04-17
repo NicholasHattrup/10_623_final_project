@@ -122,7 +122,7 @@ def parse_molecules(path : os.PathLike):
         i += 1
         
         # Read SMILES string
-        smiles = lines[i].strip()[1]
+        smiles = lines[i].strip().split()[1]
         i += 1
         
         # Read atom coordinates
