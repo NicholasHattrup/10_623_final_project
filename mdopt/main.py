@@ -163,7 +163,7 @@ def main():
 
     dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
 
-    N_max = 2500 if len(dft_molecules > N_max) else len(dft_molecules)
+    N_max = 2500 if len(dft_molecules > 2500) else len(dft_molecules)
     print(f"Running {N_max}")
 
     subset = list(dft_molecules.keys())[0:10]
