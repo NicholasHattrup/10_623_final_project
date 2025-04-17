@@ -6,6 +6,7 @@ from rdkit.Chem import rdMolAlign
 from rdkit.Geometry import Point3D
 from ase.calculators.emt import EMT
 from mace.calculators import mace_off
+import time
 from tqdm import tqdm 
 import numpy as np
 import os
@@ -82,7 +83,7 @@ def optimize_molecules(
     calc = mace_off(model="large", device='cuda')
 
     # <Converged?> <Initial RMSE from DFT> <Final RMSE from DFT>
-    out_data = np.zeros((len(dft_molecules.keys()), 3))
+    out_data = np.zeros((len(dft_molecules.keys()), 4))
 
     # subset = list(dft_molecules.keys())[:20]
 
@@ -91,12 +92,14 @@ def optimize_molecules(
             rdkit_molecule = generate_molecule_from_smiles(smiles_str)
             ase_atoms, my_mol = rdkit_mol_to_ase_atoms(rdkit_molecule, calc)
             initial_rmse = my_mol.rmse(dft_molecules[smiles_str])
+            start = time.time()
             converged, optmized_mol = ase_optimize_molecule(ase_atoms, outpath, smiles_str, tol, maxsteps)
+            end = time.time()
             final_rmse = MyMolecule.from_ase(optmized_mol).rmse(dft_molecules[smiles_str])
-            out_data[i,:] = [converged, initial_rmse, final_rmse]
+            out_data[i,:] = [converged, initial_rmse, final_rmse, end - start]
         except:
             print(f"Failed for molecule: {smiles_str}")
-            out_data[i,:] = [0.0, np.nan, np.nan]
+            out_data[i,:] = [0.0, np.nan, np.nan, np.nan]
             # raise
 
     print(f"{int(len(out_data[:,0]) - sum(out_data[:,0]))} did NOT converge")
@@ -160,8 +163,11 @@ def main():
 
     dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
 
-    # subset = list(dft_molecules.keys())[0:10]
-    # dft_molecules = {s : dft_molecules[s] for s in subset}
+    N_max = 2500 if len(dft_molecules > N_max) else len(dft_molecules)
+    print(f"Running {N_max}")
+
+    subset = list(dft_molecules.keys())[0:10]
+    dft_molecules = {s : dft_molecules[s] for s in subset}
 
     out_data = optimize_molecules(dft_molecules, args.outpath, args.tol, args.maxsteps)
 
