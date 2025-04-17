@@ -163,8 +163,11 @@ def main():
 
     dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
 
-    # subset = list(dft_molecules.keys())[0:10]
-    # dft_molecules = {s : dft_molecules[s] for s in subset}
+    N_max = 2500 if len(dft_molecules > N_max) else len(dft_molecules)
+    print(f"Running {N_max}")
+
+    subset = list(dft_molecules.keys())[0:10]
+    dft_molecules = {s : dft_molecules[s] for s in subset}
 
     out_data = optimize_molecules(dft_molecules, args.outpath, args.tol, args.maxsteps)
 
