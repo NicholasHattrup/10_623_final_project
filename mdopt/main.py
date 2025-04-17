@@ -97,7 +97,7 @@ def optimize_molecules(
         except:
             print(f"Failed for molecule: {smiles_str}")
             out_data[i,:] = [0.0, np.nan, np.nan]
-            raise
+            # raise
 
     print(f"{int(len(out_data[:,0]) - sum(out_data[:,0]))} did NOT converge")
 
