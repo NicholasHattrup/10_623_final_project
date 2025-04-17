@@ -19,7 +19,7 @@ class MyMolecule:
 
     
     def rmse(self, other : "MyMolecule"):
-        return rdMolAlign(self.to_rdkit(), other.to_rdkit())
+        return rdMolAlign.AlignMol(self.to_rdkit(), other.to_rdkit())
     
     def to_rdkit(self):
         rw = Chem.RWMol()
