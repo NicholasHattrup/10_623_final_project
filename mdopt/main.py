@@ -104,7 +104,7 @@ def parse_molecules(path : os.PathLike):
         i += 1
         
         # Read SMILES string
-        smiles = lines[i].strip()
+        smiles = lines[i].strip()[1]
         i += 1
         
         # Read atom coordinates
@@ -140,6 +140,7 @@ def main():
     args = parser.parse_args()
 
     dft_molecules = parse_molecules(args.datapath) # {smiles : structure}
+    print(next(iter(dft_molecules)))
 
     out_data = optimize_molecules(dft_molecules, args.outpath, args.tol, args.maxsteps)
 
