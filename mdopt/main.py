@@ -174,7 +174,7 @@ def main():
     np.savetxt(
         os.path.join(args.outpath, "optimization_stats.txt"),
         np.column_stack((list(dft_molecules.keys()), out_data)),
-        fmt="%s", delimiter = ",", header = "Converged?, Initial RMSE, Final RMSE"
+        fmt="%s", delimiter = ",", header = "Converged?, Initial RMSE, Final RMSE, Time [s]"
     )
 
 if __name__ == "__main__":
