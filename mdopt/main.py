@@ -149,7 +149,6 @@ def parse_molecules(path : os.PathLike):
     return entries
 
 
-
 def main():
 
     parser = argparse.ArgumentParser()

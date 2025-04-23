@@ -1,0 +1,1 @@
+from .main import MyMolecule, generate_molecule_from_smiles, parse_molecules
