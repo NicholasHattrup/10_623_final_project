@@ -22,6 +22,9 @@ from sklearn.model_selection import train_test_split
 
 from wandb.integration.lightning.fabric import WandbLogger
 
+from mdopt import MyMolecule, generate_molecule_from_smiles, parse_molecules
+from model import make_model
+
 
 @dataclass
 class ModelConfig:
