@@ -34,6 +34,20 @@ class ModelConfig:
     n_heads : int = field(
         metadata={"description" : "Number of heads in multi-headed attention"}
     )
+    d_atom : int = field(),
+    N_encoder_layers : int = field(
+        default = 2
+    ),
+    d_model : int = field(
+        default = 256
+    ),
+    n_output : int = field(
+        default = 128,
+    ),
+    dropout : float = field(
+        default = 0.1
+    )
+
 
 @dataclass 
 class TrainConfig:
@@ -87,20 +101,6 @@ class TrainConfig:
         if self.checkpoint_interval > self.n_epochs:
             self.checkpoint_interval = self.n_epochs
 
-class BatchConverter:
-
-    def __init__(self, padding_label = -1):
-        self.padding_label = padding_label
-
-    # Raw batch as returned from DataLoader
-    # training indicates if training or inference
-    def __call__(self, raw_batch, training : bool = False):
-
-        proteins, quantum_coords = zip(*raw_batch)
-
-
-
-        return features, labels_padded
 
 def collate_batch(batch, bc : BatchConverter):
     return bc(batch, training = True)
