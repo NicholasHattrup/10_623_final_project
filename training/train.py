@@ -86,90 +86,16 @@ class TrainConfig:
 
 class BatchConverter:
 
-    """
-    Converts a batch from the DataLoader to the proper dimensions by padding
-    or truncating existing data. At train time, if a sequence is too long a random subsequence
-    is taken instead of just truncating or ignoring that sequence. At inference time,
-    if a sequence is too long it is simply truncated to fit the context window.
-    """ 
-
-    def __init__(self, tokenizer, tracks : List[str], padding_label = -1):
-        self.tokenizer = tokenizer
-        self.tracks = tracks
+    def __init__(self, padding_label = -1):
         self.padding_label = padding_label
-
-    @property
-    def append_eos(self):
-        return self.tokenizer.append_eos
-    
-    @property
-    def prepend_bos(self):
-        return self.tokenizer.prepend_bos
-
-
-    def _maybe_get_slices(self, data_len, sample_length):
-
-        if data_len > sample_length:
-            start_index = np.random.randint(0, high = data_len - sample_length)
-            end_index = start_index + sample_length
-            return slice(start_index, end_index)
-
-        return slice(0, data_len)
-
 
     # Raw batch as returned from DataLoader
     # training indicates if training or inference
     def __call__(self, raw_batch, training : bool = False):
 
-        proteins, labels = zip(*raw_batch)
-
-        max_prot_len = max([len(p) for p in proteins])
-        padded_len = max_prot_len + self.append_eos + self.prepend_bos
-
-        if padded_len > self.tokenizer.max_tokenized_length:
-            padded_len = self.tokenizer.max_tokenized_length
+        proteins, quantum_coords = zip(*raw_batch)
 
 
-        # Sample a smaller sequence, ensuring there is always room
-        # for the EOS/BOS tokens if needed. This technically loses you 
-        # 2 tokens if you sample from the middle but its easier than
-        # handling all the edge cases
-        sub_sample_length = padded_len - self.append_eos - self.prepend_bos
-
-        # During training sample a random subsequence
-        if training:
-            slices = [self._maybe_get_slices(len(p), sub_sample_length) for p in proteins]
-        else:
-            slices = [slice(0, sub_sample_length) for p in proteins]
-
-        prots_slices = zip(proteins, slices)
-        label_slices = zip(labels, slices)
-
-        result = []
-        for l, s in label_slices:
-            slice_tensor = l[s,s]
-            padded = F.pad(slice_tensor, 
-                        (0, sub_sample_length - slice_tensor.shape[1], 
-                        0, sub_sample_length - slice_tensor.shape[0]), 
-                        value = self.padding_label)
-            result.append(padded)
-        labels_padded = torch.stack(result)
-
-        features = {}
-        for track in self.tracks:
-
-            if track in self.tokenizer.keys():
-                t = self.tokenizer[track]
-                toks = [t.encode(p.get_track(track)[s], prepend_bos = s.start == 0 and self.prepend_bos, \
-                                                        append_eos = s.stop >= len(p) and self.append_eos) for p,s in prots_slices]
-
-                features[track+"_tokens"] = pad_sequence(toks, batch_first = True, padding_value = self.tokenizer.pad_idx)
-            else:
-                # Add dummy spacing for bos/eos to align with other tracks
-                data_with_dummy = [F.pad(p.get_track(track)[s],(s.start == 0 and self.prepend_bos, s.stop == len(p) and self.append_eos), value = self.tokenizer.pad_idx)
-                                        for p,s in prot_slices]
-                # Pad to same lengths
-                features[track] = pad_sequence(data_with_dummy, batch_first = True, padding_value = self.tokenizer.pad_idx)
 
         return features, labels_padded
 

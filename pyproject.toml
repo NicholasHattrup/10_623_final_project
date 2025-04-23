@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"  # If not defined, then legacy behavior 
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mdopt", "training"]
+include = ["mdopt", "training", "model"]
 
 [project]
 name = "qm_delta_learning" 
