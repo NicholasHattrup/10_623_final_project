@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from lightning.fabric import Fabric
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -15,7 +15,6 @@ import pickle
 from functools import partial
 from typing import List, Dict
 from pathlib import Path
-import warnings
 from datetime import date
 import h5py
 from sklearn.model_selection import train_test_split
@@ -45,8 +44,7 @@ class TrainConfig:
         default = 5
     )
     batch_size : int = field(
-        default = 1,
-        metadata = {'description' : "Model uses lots of RAM, recomended to use gradient accumulation to increase effective batch size."}
+        default = 8,
     )
     lr : float = field(
         default = 4e-4
@@ -85,56 +83,6 @@ class TrainConfig:
 
         if self.checkpoint_interval > self.n_epochs:
             self.checkpoint_interval = self.n_epochs
-
-class ClusteredHDF5Dataset(Dataset):
-    def __init__(
-        self,
-        file_path: Path | str,
-        clusters: list[SequenceCluster],
-        label_type : str
-    ) -> None:
-        """A PyTorch Dataset for loading data from an HDF5 file according to any sampling strategy.
-           This returns the untokenized protein and its associated label
-
-        Parameters
-        ----------
-        file_path : Path | str
-            The path to the HDF5 file containing the data (keys are protein tags)
-        clusters : list[SequenceCluster]
-            A list of sequences clustered with MMSeqs. Contains the tag and sequence data
-        label_type : str
-            Which label to expect in the dataset (e.g. distogram)
-        """
-        self.file_path = file_path
-        self.clusters = clusters
-        self.label_type = label_type
-
-    @property
-    def h5_data(self) -> h5py.File:
-        """Lazy load the h5 file in the dataloader worker process."""
-        if not hasattr(self, "_h5_data"):
-            self._h5_data = h5py.File(self.file_path, "r") # should be closed by upon garbage collection
-        return self._h5_data
-
-    def __len__(self) -> int:
-        return len(self.clusters)
-
-    def __getitem__(self, idx: int) -> Dict[str, str]:
-        # Get random sample from the idx'th cluster
-        seq_like = np.random.choice(self.clusters[idx])
-
-        group = self._h5_data[seq_like.tag]
-        # seq = group["sequence"][()] # should be same as seq_like.sequence
-
-        label = torch.from_numpy(group[self.label_type][:])
-
-        prot = Protein(tag = seq_like.tag, sequence = seq_like.sequence, 
-                        disorder = group["iupred3_disorder_score"][:],
-                        disorder_binding = group["anchor2_disorder_binding_score"][:], 
-                        hydropathy = group["hydropathy"][:]
-                    )
-
-        return prot, label
 
 class BatchConverter:
 
