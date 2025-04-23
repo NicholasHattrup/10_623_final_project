@@ -15,11 +15,12 @@ from utils import xavier_normal_small_init_, xavier_uniform_small_init_
 
 ### Model definition
 
+#n_output needs to be > 3 * n_atoms in biggest molecule
 def make_model(d_atom, N_encoder_layers=2, d_model=128, h=8, dropout=0.1, 
                lambda_attention=0.3, lambda_distance=0.3, trainable_lambda=False,
                N_dense=2, leaky_relu_slope=0.0, aggregation_type='mean', 
                dense_output_nonlinearity='relu', distance_matrix_kernel='softmax',
-               use_edge_features=False, n_output=64,
+               use_edge_features=False, n_output=128,
                control_edges=False, integrated_distances=False, 
                scale_norm=False, init_type='uniform', use_adapter=False, n_generator_layers=1):
     "Helper: Construct a model from hyperparameters."
