@@ -1,0 +1,50 @@
+#https://github.com/pypa/sampleproject/blob/main/pyproject.toml
+
+[build-system]
+requires = ["setuptools"]  # REQUIRED if [build-system] table is used
+build-backend = "setuptools.build_meta"  # If not defined, then legacy behavior can happen.
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mdopt", "training", "model"]
+
+[project]
+name = "qm_delta_learning" 
+version = "0.0.1"
+description = ""
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+keywords = ["Quantum Chemistry"]
+
+authors = [
+  {name = "Ethan Meitz", email = "emeitz@andrew.cmu.edu"}
+]
+
+maintainers = [
+  {name = "Ethan Meitz", email = "emeitz@andrew.cmu.edu"}
+]
+
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Computational Biology",
+  "Programming Language :: Python :: 3.10",
+]
+
+
+dynamic = ["dependencies", "optional-dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.dynamic.optional-dependencies]
+dev = { file = ["requirements-dev.txt"] }
+
+# <NAME CALLED ON CLI> = "<MODULE_NAME>:<FUNCTION_NAME_CALLED>"
+[project.scripts]
+train_model = "training.train:main"
