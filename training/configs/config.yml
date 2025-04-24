@@ -1,0 +1,12 @@
+datapath:
+outpath:
+n_epochs:
+batch_size:
+lr:
+val_size:
+test_size:
+n_devs:
+model_config:
+  n_layers:
+  n_heads:
+  d_model:

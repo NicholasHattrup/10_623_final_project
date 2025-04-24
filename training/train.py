@@ -25,11 +25,18 @@ from wandb.integration.lightning.fabric import WandbLogger
 
 @dataclass
 class ModelConfig:
-    n_layers : int = field(
+    n_transformer_blocks : int = field(
         metadata={"description" : "Number of transformer layers"}
     ),
     n_heads : int = field(
         metadata={"description" : "Number of heads in multi-headed attention"}
+    ),
+    d_atom : int = field(
+        default = 64, 
+        metadata = {"description" : "Maximum number of atoms in a molecule model can accept"}
+    ),
+    d_model : int = field(
+        default = 256
     )
 
 @dataclass 
@@ -69,9 +76,6 @@ class TrainConfig:
     wandb_project : str = field(
         default = '',
         metadata = {'description' : "Name of wandb project, empty string will cause wandb to not be initialized."}
-    )
-    context_length : int = field(
-        default = 1024,
     )
     model_config : ModelConfig = field(
         default_factory = ModelConfig,
@@ -183,6 +187,18 @@ def split_data(x : list, test_size, val_size, seed = 42):
 
     return train, val, test
 
+def load_model(cfg : TrainConfig):
+
+    model_params = {
+        "d_atom" : cfg.model_config.d_atom,
+        "n_output" : 3*cfg.model_config.d_atom, # x, y, z coords for each
+        "h" : cfg.model_config.n_heads,
+        "d_model": cfg.model_config.d_model,
+        "N" : cfg.model_config.n_transformer_blocks
+    }
+
+    return make_model(**model_params)
+
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
 
     
@@ -251,10 +267,10 @@ def main():
     args = parser.parse_args()
 
     with open(args.config) as f:
-        config = ContactTrainConfig(**yaml.safe_load(f))
+        config = TrainConfig(**yaml.safe_load(f))
 
     today = date.today()
-    model_name = f"{config.esm_str}-{today.strftime('%Y-%m-%d')}"
+    model_name = f"model-{today.strftime('%Y-%m-%d')}"
     out_dir = os.path.join(config.outpath, model_name)
     os.makedirs(out_dir, exist_ok = True)
 
