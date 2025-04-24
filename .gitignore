@@ -3,6 +3,7 @@ datasets/
 *.traj
 *.pt
 *.xyz
+*/traiuning_runs/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
