@@ -11,39 +11,34 @@ import os
 import yaml
 import numpy as np
 import wandb
-import pickle
-from functools import partial
-from typing import List, Dict
-from pathlib import Path
 from datetime import date
-import h5py
+from rdkit import Chem
 from sklearn.model_selection import train_test_split
 
 
 from wandb.integration.lightning.fabric import WandbLogger
 
-from mdopt import MyMolecule, generate_molecule_from_smiles, parse_molecules
-from model import make_model
+from mdopt import generate_molecule_from_smiles, parse_molecules
+from model import make_model, construct_loader, featurize_mol
 
 
 @dataclass
 class ModelConfig:
-    n_layers : int = field(
+    n_transformer_blocks : int = field(
+        default = 8,
         metadata={"description" : "Number of transformer layers"}
-    ),
+    )
     n_heads : int = field(
+        default = 16,
         metadata={"description" : "Number of heads in multi-headed attention"}
     )
-    d_atom : int = field(),
-    N_encoder_layers : int = field(
-        default = 2
-    ),
+    d_atom : int = field(
+        default = 64, 
+        metadata = {"description" : "Maximum number of atoms in a molecule model can accept"}
+    )
     d_model : int = field(
         default = 256
-    ),
-    n_output : int = field(
-        default = 128,
-    ),
+    )
     dropout : float = field(
         default = 0.1
     )
@@ -87,9 +82,6 @@ class TrainConfig:
         default = '',
         metadata = {'description' : "Name of wandb project, empty string will cause wandb to not be initialized."}
     )
-    context_length : int = field(
-        default = 1024,
-    )
     model_config : ModelConfig = field(
         default_factory = ModelConfig,
     )
@@ -102,24 +94,18 @@ class TrainConfig:
             self.checkpoint_interval = self.n_epochs
 
 
-def collate_batch(batch, bc : BatchConverter):
-    return bc(batch, training = True)
-
-def collate_single(batch, bc : BatchConverter):
-    features, labels = collate_batch(batch, bc)
-    return features.squeeze(0), labels.squeeze(0)
 
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
-        for cluster in tr_dataset.clusters:
-            f.write("\t".join([p.tag for p in cluster.data]) + "\n")
+        for ss in tr_dataset:
+            f.write(f"{ss}\n")
     with open(os.path.join(out_dir, "validation_set.txt"), "w") as f:
-        for cluster in val_dataset.clusters:
-            f.write("\t".join([p.tag for p in cluster.data]) + "\n")
+        for ss in val_dataset:
+            f.write(f"{ss}\n")
     if te_dataset is not None:
         with open(os.path.join(out_dir, "testing_set.txt"), "w") as f:
-            for cluster in te_dataset.clusters:
-                f.write("\t".join([p.tag for p in cluster.data]) + "\n")
+            for ss in te_dataset:
+                f.write(f"{ss}\n")
 
 def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch):
     with tqdm(dataloader, unit = "batch", total = len(dataloader)) as bar:
@@ -127,19 +113,16 @@ def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch)
 
         model.train()
         optimizer.zero_grad()
-        for i, (toks, contact_probs_gpu) in enumerate(bar):
+        for i, batch in enumerate(bar):
+            adjacency_matrix, node_features, distance_matrix, _ = batch
+            batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
 
-            toks_gpu = {k: v for k, v in toks.items()} #.to(fabric.device)
-            #contact_probs_gpu = contact_probs#.to(fabric.device) # padding is -1 per collate_batch
-            contact_prob_preds = model(**toks_gpu) # (batch, seq_len, seq_len)
-    
-            training_loss = criterion(contact_prob_preds, contact_probs_gpu) / cfg.grad_accumulation_steps
+            pred_delta = model(node_features, batch_mask, adjacency_matrix, distance_matrix, None)
+
+            #* Need to update this to mimic the HW2 training loop with noise etc.
+            training_loss = criterion(...)
 
             fabric.backward(training_loss)
-
-            if ((i + 1) % cfg.grad_accumulation_steps == 0) or (i + 1 == len(dataloader)):
-                optimizer.step()
-                optimizer.zero_grad()
 
             wandb.log({"training_loss" : training_loss})
 
@@ -149,9 +132,13 @@ def evaluate(cfg, dataloader, criterion, model, fabric, dataset : str):
     model.eval()
     loss = 0.0
     with torch.no_grad():
-        for (smiles_strs, quantum_coords) in tqdm(dataloader, desc = "Evaluation"):
-            B = quantum_coords.shape[0]
-            predicted_coords = model(smiles_strs)
+        for batch in tqdm(dataloader, desc = "Evaluation"):
+            adjacency_matrix, node_features, distance_matrix, _ = batch
+            batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
+
+            #* ALSO NEED TO UPDATE THIS TO BE LIKE DIFFUSION IN HW2
+            pred_delta = model(node_features, batch_mask, adjacency_matrix, distance_matrix, None)
+            
 
             loss += criterion(predicted_coords, quantum_coords)
 
@@ -186,46 +173,66 @@ def split_data(x : list, test_size, val_size, seed = 42):
 
     return train, val, test
 
+def load_model(model_config : ModelConfig):
+
+    model_params = {
+        "d_atom" : model_config.d_atom,
+        "n_output" : 3*model_config.d_atom, # x, y, z coords for each
+        "h" : model_config.n_heads,
+        "d_model": model_config.d_model,
+        "N" : model_config.n_transformer_blocks,
+        "dropout": model_config.dropout
+    }
+
+    return make_model(**model_params)
+
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
 
-    
-    # 1. Load Ground-Truth Dataset
-        #TODO
-        dataset = 
-    # 2. Parse out smiles strings and generate "low-quality" starting point
-        #TODO
-        smiles_strs = 
-    # 3. Test Train Split (use constant random seed)
-    train_data, val_data, test_data = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
+    print("LOADING MOLECULES")
 
-    train_dataset = ClusteredHDF5Dataset(train_data)
-    val_dataset = ClusteredHDF5Dataset(val_data)
-    test_dataset = ClusteredHDF5Dataset(test_data)
+    # Load Quantum Dataset
+    dft_molecules = parse_molecules(cfg.datapath)
+    smiles_strs = dft_molecules.keys()
 
-    # Copy tags used in train, val, test datasets to outdir
-    save_split(out_dir, train_dataset, val_dataset, test_dataset) #* NEED TO UPDATE NOT USING CLUSTERS
+    print("LOADED MOLECULES")
 
-    print(f"There are training clusters: {len(train_dataset)}")
-    print(f"There are validation clusters: {len(val_dataset)}")
-    print(f"There are testing clusters: {len(test_dataset)}")
+    # Generate RDKit Molecules with ETKDGv3
+    low_quality_mols = {ss : Chem.RemoveHs(generate_molecule_from_smiles(ss)) for ss in tqdm(smiles_strs, desc = "Low-Quality Structures")}
 
 
-    model = DeltaCoordModel(cfg.model_config)
+    # Calculate Molecule Features (atomic number, number of neighbors, number of hydrogens, formal charge)
+    # featurize_mol returns tuple of (node_features, adj_matrix, distance_matrix)
+    low_quality_mol_features = {ss : featurize_mol(lqm, False, True) for ss,lqm in tqdm(low_quality_mols.items(), desc = "Featurizing")}
 
-    criterion = #TODO IMPLEMENT DIFFUSION LOSS
+    # Test-Train-Val Split
+    train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
+    save_split(out_dir, train_smiles, val_smiles, test_smiles)
+    print(f"There are training clusters: {len(train_smiles)}")
+    print(f"There are validation clusters: {len(val_smiles)}")
+    print(f"There are testing clusters: {len(test_smiles)}")
+
+    # Setup data in format MAT expects
+    X_train = [low_quality_mol_features[ss] for ss in train_smiles]
+    X_val = [low_quality_mol_features[ss] for ss in val_smiles]
+    X_test = [low_quality_mol_features[ss] for ss in test_smiles]
+    Y_train = [dft_molecules[ss] for ss in train_smiles]
+    Y_val = [dft_molecules[ss] for ss in val_smiles]
+    Y_test = [dft_molecules[ss] for ss in test_smiles]
+
+    train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
+    val_dl = construct_loader(X_val, Y_val, 1, shuffle = False)
+    train_dl = construct_loader(X_test, Y_test, 1, shuffle = False)
+    train_dl, val_dl, test_dl = fabric.setup_dataloaders(train_dl, val_dl, test_dl)
+
+
+    model = load_model(cfg.model_config)
+
+    criterion = None #TODO IMPLEMENT DIFFUSION LOSS
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
     optimizer = torch.optim.Adam(model.parameters(), lr = cfg.lr)
     model, optimizer = fabric.setup(model, optimizer)
 
-
-    collate_fn = partial(collate_batch, tokenizer = tokenizer,padding_label = padding_label)
-    train_dl = DataLoader(train_dataset, batch_size = cfg.batch_size,
-                         shuffle = True, collate_fn = collate_fn,
-                         num_workers = cfg.data_loader_workers, pin_memory = True)
-    val_dl = DataLoader(val_dataset, batch_size = 1, shuffle = False, collate_fn = collate_single)
-    test_dl = DataLoader(test_dataset, batch_size = 1, shuffle = False, collate_fn = collate_single)
-    train_dl, val_dl, test_dl = fabric.setup_dataloaders(train_dl, val_dl, test_dl)
 
     for epoch in range(cfg.n_epochs):
         train_one_epoch(train_dl, criterion, model, optimizer, fabric, cfg, epoch)
@@ -254,10 +261,10 @@ def main():
     args = parser.parse_args()
 
     with open(args.config) as f:
-        config = ContactTrainConfig(**yaml.safe_load(f))
+        config = TrainConfig(**yaml.safe_load(f))
 
     today = date.today()
-    model_name = f"{config.esm_str}-{today.strftime('%Y-%m-%d')}"
+    model_name = f"model-{today.strftime('%Y-%m-%d')}"
     out_dir = os.path.join(config.outpath, model_name)
     os.makedirs(out_dir, exist_ok = True)
 
@@ -272,7 +279,7 @@ def main():
     fabric = Fabric(
                 accelerator = "cuda",
                 devices = config.n_devs,
-                precision = config.model_config.precision,
+                precision = "32",
                 loggers=[wandb_logger], 
                 callbacks=[checkpoint_callback]
             )

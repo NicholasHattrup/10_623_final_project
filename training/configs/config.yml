@@ -1,0 +1,14 @@
+datapath: "/mnt/merged/emeitz/10_623_final_project/mdopt/QCDGE.xyz"
+outpath: "/mnt/merged/emeitz/10_623_final_project/training/training_runs"
+n_epochs: 5
+batch_size: 8 
+lr: 4e-4
+val_size: 0.2
+test_size: 0.0
+n_devs: 1
+wandb_project: "GenAIProject"
+
+model_config:
+  n_transformer_blocks: 8
+  n_heads: 16
+  d_model: 512

@@ -48,3 +48,4 @@ dev = { file = ["requirements-dev.txt"] }
 # <NAME CALLED ON CLI> = "<MODULE_NAME>:<FUNCTION_NAME_CALLED>"
 [project.scripts]
 train_model = "training.train:main"
+optimize_molecules = "mdopt.main:main"

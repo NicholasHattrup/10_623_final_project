@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from utils import xavier_normal_small_init_, xavier_uniform_small_init_
+from .utils import xavier_normal_small_init_, xavier_uniform_small_init_
 
 
 ### Model definition
