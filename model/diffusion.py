@@ -77,8 +77,8 @@ class Diffusion(nn.Module):
             2. Define the coefficients for the diffusion process.
         Args:
             model: The model to use for the diffusion process.
-            image_size: The size of the images.
-            channels: The number of channels in the images.
+            max_atoms: The max number of atoms model can handle.
+                size of model output is (3, max_atoms) flattened
             timesteps: The number of timesteps for the diffusion process.
         """
         # 1. define the scheduler here
