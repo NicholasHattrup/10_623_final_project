@@ -115,10 +115,19 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge, positions=None):
     Returns:
         A tuple of molecular graph descriptors (node features, adjacency matrix, distance matrix).
     """
-    node_features = np.array([get_atom_features(atom, one_hot_formal_charge)
-                              for atom in mol.GetAtoms()])
 
-    adj_matrix = np.eye(mol.GetNumAtoms())
+    num_atoms = mol.GetNumAtoms()
+
+    node_features = []
+    symbols = []
+    for atom in mol.GetAtoms():
+        node_features.append(get_atom_features(atom, one_hot_formal_charge))
+        symbols.append(atom.GetSymbol())
+
+    node_features = np.array(node_features)
+    symbols = np.array(symbols)
+
+    adj_matrix = np.eye(num_atoms)
     for bond in mol.GetBonds():
         begin_atom = bond.GetBeginAtom().GetIdx()
         end_atom = bond.GetEndAtom().GetIdx()
@@ -142,24 +151,11 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge, positions=None):
 
 
     pos_matrix = np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z]
-                           for k in range(mol.GetNumAtoms())])
-    dist_matrix = pairwise_distances(pos_matrix)
+                           for k in range(num_atoms)])
+    pos_tensor = torch.from_numpy(pos_matrix)
+    dist_matrix = torch.cdist(pos_tensor, pos_tensor)
 
-    if add_dummy_node:
-        m = np.zeros((node_features.shape[0] + 1, node_features.shape[1] + 1))
-        m[1:, 1:] = node_features
-        m[0, 0] = 1.
-        node_features = m
-
-        m = np.zeros((adj_matrix.shape[0] + 1, adj_matrix.shape[1] + 1))
-        m[1:, 1:] = adj_matrix
-        adj_matrix = m
-
-        m = np.full((dist_matrix.shape[0] + 1, dist_matrix.shape[1] + 1), 1e6)
-        m[1:, 1:] = dist_matrix
-        dist_matrix = m
-
-    return node_features, adj_matrix, dist_matrix
+    return node_features, adj_matrix, dist_matrix, pos_matrix, symbols
 
 
 def get_atom_features(atom, one_hot_formal_charge=True):

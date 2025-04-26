@@ -2,7 +2,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
-from rdkit.Chem import rdMolAlign
+from rdkit.Chem import rdMolAlign, rdDetermineBonds
 from rdkit.Geometry import Point3D
 from ase.calculators.emt import EMT
 from mace.calculators import mace_off
@@ -14,27 +14,33 @@ import argparse
 
 class MyMolecule:
 
-    def __init__(self, symbols : list[str], positions : np.ndarray):
+    def __init__(self, symbols : list[str], positions : np.ndarray, smiles : str):
         self.symbols = symbols
         self.positions = positions
+        self.smiles = smiles
 
     
     def rmse(self, other : "MyMolecule"):
         return rdMolAlign.AlignMol(self.to_rdkit(), other.to_rdkit())
-    
+
     def to_rdkit(self):
-        rw = Chem.RWMol()
-        for s in self.symbols:
-            rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
+        try:
+            rw = Chem.RWMol()
+            for s in self.symbols:
+                rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
 
-        # ---- 3.  add a conformer with 3‑D coordinates -------------
-        conf = Chem.Conformer(len(self.symbols))
-        for i, (x, y, z) in enumerate(self.positions):
-            conf.SetAtomPosition(i, Point3D(x, y, z))
-        rw.AddConformer(conf, assignId=True)
+            # ---- 3.  add a conformer with 3‑D coordinates -------------
+            conf = Chem.Conformer(len(self.symbols))
+            for i, (x, y, z) in enumerate(self.positions):
+                conf.SetAtomPosition(i, Point3D(x, y, z))
+            rw.AddConformer(conf, assignId=True)
 
-        mol = rw.GetMol()
-        Chem.SanitizeMol(mol)  
+            mol = rw.GetMol()
+            Chem.SanitizeMol(mol)
+        except Exception as e:
+            # print(f"Failed to convert {self.smiles} to rdkit geometry")
+            return None
+
         return mol
     
     def to_ase(self, calculator):
@@ -59,9 +65,13 @@ def rdkit_mol_to_ase_atoms(mol, calculator):
 
 def generate_molecule_from_smiles(smiles_str : str):
     params = AllChem.ETKDGv3()
-    mol = Chem.AddHs(Chem.MolFromSmiles(smiles_str))
-    AllChem.EmbedMolecule(mol, params)
-    return mol
+    mol = Chem.MolFromSmiles(smiles_str)
+    if mol is not None:
+        mol = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol, params)
+        return mol
+    else:
+        return None
 
 def ase_optimize_molecule(
         mol : Atoms,
@@ -144,7 +154,7 @@ def parse_molecules(path : os.PathLike):
             coords.append([x,y,z])
         i += 1 # skip empty line
         
-        entries[smiles] = MyMolecule(symbols, np.array(coords))
+        entries[smiles] = MyMolecule(symbols, np.array(coords), smiles)
     
     return entries
 
