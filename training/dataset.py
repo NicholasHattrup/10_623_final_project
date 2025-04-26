@@ -4,14 +4,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 from rdkit import Chem
 import numpy as np
+import torch
 
 from mdopt import generate_molecule_from_smiles, parse_molecules
 from model import featurize_mol
 
 
 def featurize_low_quality_mols(smiles_str : str):
-    mol = Chem.RemoveHs(generate_molecule_from_smiles(smiles_str))
+    mol = generate_molecule_from_smiles(smiles_str)
     if mol is not None:
+        mol = Chem.RemoveHs(mol)
         try:
             node_features, adj_matrix, dist_matrix, positions, symbols = featurize_mol(mol, True)
             return smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols
@@ -30,6 +32,8 @@ def main():
 
     low_quality_mol_data = {}
     fails = 0
+
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(featurize_low_quality_mols, ss) for ss in smiles_strs]
