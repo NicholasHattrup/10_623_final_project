@@ -1,5 +1,6 @@
-datapath: "/mnt/merged/emeitz/10_623_final_project/mdopt/QCDGE.xyz"
-outpath: "/mnt/merged/emeitz/10_623_final_project/training/training_runs"
+datapath: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/datasets/QCDGE_RDKit/QCDGE.xyz"
+outpath: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/training/training_runs/"
+datapath_opt: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/datasets/QCDGE_RDKit/RDKit.xyz"
 n_epochs: 5
 batch_size: 8 
 lr: 4e-4

@@ -20,10 +20,13 @@ from sklearn.metrics import pairwise_distances
 from torch.utils.data import Dataset
 
 use_cuda = torch.cuda.is_available()
+use_mps = torch.backends.mps.is_available()
 FloatTensor = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if use_cuda else torch.LongTensor
 IntTensor = torch.cuda.IntTensor if use_cuda else torch.IntTensor
 DoubleTensor = torch.cuda.DoubleTensor if use_cuda else torch.DoubleTensor
+
+
 
 
 def load_data_from_df(dataset_path, add_dummy_node=True, one_hot_formal_charge=False, use_data_saving=True):
@@ -101,7 +104,7 @@ def load_data_from_smiles(x_smiles, labels, add_dummy_node=True, one_hot_formal_
     return x_all, y_all
 
 
-def featurize_mol(mol, add_dummy_node, one_hot_formal_charge):
+def featurize_mol(mol, add_dummy_node, one_hot_formal_charge, positions=None):
     """Featurize molecule.
 
     Args:
@@ -120,8 +123,24 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge):
         begin_atom = bond.GetBeginAtom().GetIdx()
         end_atom = bond.GetEndAtom().GetIdx()
         adj_matrix[begin_atom, end_atom] = adj_matrix[end_atom, begin_atom] = 1
+    
 
-    conf = mol.GetConformer()
+    if positions is None:
+        conf = mol.GetConformer()
+    else:
+        # build a bare‐bones Conformer
+        conf = Chem.Conformer(mol.GetNumAtoms())
+        # set each atom’s 3D coords
+        for i, pos in enumerate(positions):
+            conf.SetAtomPosition(i, pos)
+        # now do the two “magic” steps:
+        conf.Set3D(True)
+        mol.RemoveAllConformers()
+        mol.AddConformer(conf, assignId=True)
+        # if you want to keep the same API below:
+        conf = mol.GetConformer()  
+
+
     pos_matrix = np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z]
                            for k in range(mol.GetNumAtoms())])
     dist_matrix = pairwise_distances(pos_matrix)
