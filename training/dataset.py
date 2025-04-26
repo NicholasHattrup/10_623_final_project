@@ -31,7 +31,7 @@ def main():
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(featurize_low_quality_mols, ss) for ss in smiles_strs]
 
-        for res in tqdm(as_completed(futures), total = len(futures), desc = "Generating Low Quality Molecules"):
+        for f in tqdm(as_completed(futures), total = len(futures), desc = "Generating Low Quality Molecules"):
             res = f.result()
             smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols = res
             if node_features is not None:
@@ -46,8 +46,8 @@ def main():
             else:
                 fails += 1
 
-    outpath = os.path.base
-    np.savez(os.path.join(outpath, "low_quality_features.npz"), **low_quality_mol_data)
+    outpath = "/mnt/mntsdb/genai/10_623_final_project/low_quality_features.npz"
+    np.savez(outpath, **low_quality_mol_data)
     
     print(f"Failed to generate features for {fails} molecules")
 
