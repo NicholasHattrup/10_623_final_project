@@ -159,7 +159,7 @@ def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
             for ss in te_dataset:
                 f.write(f"{ss}\n")
 
-def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch):
+def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
     with tqdm(dataloader, unit = "batch", total = len(dataloader)) as bar:
         bar.set_description(f"Epoch [{epoch+1}/{cfg.n_epochs}]")
 
@@ -168,27 +168,27 @@ def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch)
         for i, batch in enumerate(bar):
             
             # Unpack batch
-            other_features, low_quality_positions, delta = batch
+            *other_features, delta = batch
             # Sample noise
-            noise = torch.randn(delta.shape, device = delta.device)
+            noise = torch.randn(delta.shape, device = fabric.device)
             # Evaluate Loss
-            training_loss = model(delta, low_quality_positions, other_features, noise)
+            training_loss = model(delta, other_features, noise)
 
             fabric.backward(training_loss)
 
             wandb.log({"training_loss" : training_loss})
 
 
-def evaluate(cfg, dataloader, criterion, model, fabric, dataset : str):
+def evaluate(cfg, dataloader, model, fabric, dataset : str):
 
     model.eval()
     loss = 0.0
 
     with torch.no_grad():
         for batch in tqdm(dataloader, desc = "Evaluation"):
-            other_features, low_quality_positions, delta = batch
+            *other_features, delta = batch
             noise = torch.randn(delta.shape, device = delta.device)
-            loss += model(delta, low_quality_positions, other_features, noise)
+            loss += model(delta, other_features, noise)
 
     return loss/len(dataloader)
 
@@ -220,12 +220,14 @@ def split_data(x : list, test_size, val_size, seed = 42):
 
 def load_model(model_config : ModelConfig):
 
+    #* match the keys from MAT with what
+    #* I called things in the config
     model_params = {
         "d_atom" : model_config.d_atom,
         "n_output" : 3*model_config.d_atom, # x, y, z coords for each
         "h" : model_config.n_heads,
         "d_model": model_config.d_model,
-        "N" : model_config.n_transformer_blocks,
+        "N_encoder_layers" : model_config.n_transformer_blocks,
         "dropout": model_config.dropout
     }
 
@@ -234,37 +236,48 @@ def load_model(model_config : ModelConfig):
 def work(v):
     return v.to_rdkit_no_H()
 
-def load_quantum_dataset(quantum_datapath : os.PathLike, max_workers = 40):
+def load_quantum_dataset(dft_mol_path : os.PathLike, quantum_datapath : os.PathLike, max_workers = 40):
 
-    dft_molecules = parse_molecules(quantum_datapath)
+    if not os.path.isfile(dft_mol_path):
+        dft_molecules = parse_molecules(quantum_datapath)
 
-    fails = 0; successes = 0
-    dft_molecules_rdkit = {}
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(work, v) : ss for ss, v in dft_molecules.items()}
+        fails = 0; successes = 0
+        dft_molecules_rdkit = {}
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(work, v) : ss for ss, v in dft_molecules.items()}
 
-        for f in tqdm(as_completed(futures), desc = "Quantum --> RDKit", total = len(futures)):
-            ss = futures[f]
-            res = f.result()
-            if res is not None:
-                dft_molecules_rdkit[ss] = res
-                successes += 1
-            else:
-                fails += 1
+            for f in tqdm(as_completed(futures), desc = "Quantum --> RDKit", total = len(futures)):
+                ss = futures[f]
+                res = f.result()
+                if res is not None:
+                    dft_molecules_rdkit[ss] = res
+                    successes += 1
+                else:
+                    fails += 1
 
-    print(f"Failed to construct geometries for {fails}, succeded for {successes}")
+        print(f"Failed to construct geometries for {fails}, succeded for {successes}")
 
-    return dft_molecules_rdkit
+        with open(dft_mol_path, "wb") as f:
+            pickle.dump(dft_molecules_rdkit, f)
+
+        return dft_molecules_rdkit
+    else:
+        with open(dft_mol_path, "rb") as f:
+            dft_molecules_rdkit = pickle.load(f)
+        return dft_molecules_rdkit
+
 
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
+    datapath = os.path.dirname(cfg.features_path)
+
     # Load Quantum Dataset and convert to RDKit Molecules
     print("LOADING QUANTUM MOLECULES")
-    dft_molecules = load_quantum_dataset(cfg.quantum_datapath, max_workers)
+    dft_mol_path = os.path.join(datapath, "dft_molecules.pkl")
+    dft_molecules = load_quantum_dataset(dft_mol_path, cfg.quantum_datapath, max_workers)
     smiles_strs = dft_molecules.keys()
     print("LOADED QUANTUM MOLECULES")
 
-    # low_quality_features = np.load(cfg.features_path)
     print("LOADING LOW-QUALITY MOLECULES")
     with open(cfg.features_path, "rb") as f:
         low_quality_features = pickle.load(f)
@@ -273,10 +286,17 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
     #! SMILES DO WHATEVER THE HELL THEY WANT
-    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))}
+    # bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
+    # deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in bar}
 
     # Take intersection of the low quality and quantum molecules
-    smiles_strs = deltas.keys()
+    # smiles_strs = deltas.keys()
+
+    #! some fake data while nick makes the correct data
+    smiles_strs = ["CO", "CC", "CCC", "CCCC"]
+    deltas = {ss : np.random.randn(len(ss), len(ss)) for ss in smiles_strs} #* fake distance matricies
+
+    #! NEED TO PAD DELTAS 
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(list(smiles_strs), cfg.test_size, cfg.val_size, seed = 42)
@@ -286,21 +306,27 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"There are testing clusters: {len(test_smiles)}")
 
     # Setup data in format MAT expects
-    X_train = [(low_quality_mol_features[ss], low_quality_positions[ss])  for ss in train_smiles]
-    X_val = [(low_quality_mol_features[ss], low_quality_positions[ss]) for ss in val_smiles]
-    X_test = [(low_quality_mol_features[ss], low_quality_positions[ss]) for ss in test_smiles]
+    X_train = [low_quality_features[ss]  for ss in train_smiles]
+    X_val = [low_quality_features[ss] for ss in val_smiles]
+    X_test = [low_quality_features[ss] for ss in test_smiles]
     Y_train = [deltas[ss] for ss in train_smiles]
     Y_val = [deltas[ss] for ss in val_smiles]
     Y_test = [deltas[ss] for ss in test_smiles]
 
     train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
     val_dl = construct_loader(X_val, Y_val, 1, shuffle = False)
-    train_dl = construct_loader(X_test, Y_test, 1, shuffle = False)
+    test_dl = construct_loader(X_test, Y_test, 1, shuffle = False)
     train_dl, val_dl, test_dl = fabric.setup_dataloaders(train_dl, val_dl, test_dl)
 
 
     noise_model = load_model(cfg.model_config)
-    diffusion_model = Diffusion(noise_model, cfg.model_config.d_atom, cfg.model_config.timesteps)
+    noise_model.to(fabric.device)
+    diffusion_model = Diffusion(
+                            noise_model,
+                            max_atoms = cfg.model_config.d_atom,
+                            timesteps = cfg.model_config.timesteps
+                        )
+    diffusion_model.to(fabric.device)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
     optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = cfg.lr)

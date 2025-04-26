@@ -70,6 +70,9 @@ class Diffusion(nn.Module):
         self.max_atoms = max_atoms
         self.model = model
         self.num_timesteps = int(timesteps)
+        self.device = model.encoder.layers[0].self_attn.linears[0].weight.device
+
+        print(f"MODEL DEVICE {self.device}")
 
         """
         Initializes the diffusion process.
@@ -81,29 +84,19 @@ class Diffusion(nn.Module):
                 size of model output is (3, max_atoms) flattened
             timesteps: The number of timesteps for the diffusion process.
         """
-        # 1. define the scheduler here
-        # self.a = torch.cat((torch.tensor([1.0]),cosine_schedule(self.num_timesteps)))
-        self.a = cosine_schedule(self.num_timesteps)
-        # self.a_bar = self.a/self.a[0]
-        # 2. pre-compute the coefficients for the diffusion process
-        self.sqrt_a = torch.sqrt(self.a)
-        self.a_bar = torch.cumprod(self.a, dim = 0) # this is from 1 -> T
- 
-        # self.a_bar = self.a_bar/self.a_bar[0]
-        self.sqrt_a_bar = torch.sqrt(self.a_bar)
-        self.inv_sqrt_a_bar = 1/self.sqrt_a_bar
-        self.op_sqrt_a_bar = torch.sqrt(1 - self.a_bar)
+        self.register_buffer('a', cosine_schedule(self.num_timesteps))
+        self.register_buffer('sqrt_a', torch.sqrt(self.a))
+        self.register_buffer('a_bar', torch.cumprod(self.a, dim=0))
+        self.register_buffer('sqrt_a_bar', torch.sqrt(self.a_bar))
+        self.register_buffer('inv_sqrt_a_bar', 1 / self.sqrt_a_bar)
+        self.register_buffer('op_sqrt_a_bar', torch.sqrt(1 - self.a_bar))
 
-        # for when we need to index t = 0
-        # The extra 1 at the front is for alpha_bar[0]
-        self.a_bar2 = torch.cat((torch.tensor([1.0]), self.a_bar[:-1])) # this is from 0 -> T-1
+        # For alpha_bar[0]
+        self.register_buffer('a_bar2', torch.cat((torch.tensor([1.0], device=self.a.device), self.a_bar[:-1])))
 
-        self.mu_c0 = self.sqrt_a * (1 - self.a_bar2) / (1 - self.a_bar)
-        self.mu_c1 = torch.sqrt(self.a_bar2) * (1-self.a) / (1 - self.a_bar)
-        self.std = torch.sqrt((1-self.a) * (1-self.a_bar2) / (1-self.a_bar))
-
-    
-        # ###########################################################
+        self.register_buffer('mu_c0', self.sqrt_a * (1 - self.a_bar2) / (1 - self.a_bar))
+        self.register_buffer('mu_c1', torch.sqrt(self.a_bar2) * (1 - self.a) / (1 - self.a_bar))
+        self.register_buffer('std', torch.sqrt((1 - self.a) * (1 - self.a_bar2) / (1 - self.a_bar)))
 
     def noise_like(self, shape, device):
         """
@@ -202,12 +195,11 @@ class Diffusion(nn.Module):
         x_t = mu + extract(self.op_sqrt_a_bar, t, x_0.shape) * noise
         return x_t
 
-    def p_losses(self, x_0, low_quality_positions, other_features, t, noise):
+    def p_losses(self, x_0, other_features, t, noise):
         """
         Computes the loss for the forward diffusion.
         Args:
             x_0: (B x N x 3) Batch of initial deltas between low-quality and high-quality.
-            low_quality_positions : (B x N x 3) initial low-quality positions
             other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
             t: (B,) 1D tensor containing a batch of time indices to compute the loss at.
             noise: (B x N x 3) The noise tensor to use.
@@ -218,27 +210,30 @@ class Diffusion(nn.Module):
         adjacency_matrix, node_features, distance_matrix = other_features
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
 
-        #* Re-compute distance matrix with noise
-        #* THIS IS PROBABLY SLOW
-        noised_positions = low_quality_positions + x_t
-        updated_distance_matrix = torch.cdist(noised_positions, noised_positions)
+        # Nodes and Connectivity Are Unaffected By Noise
+        # Only Distance Matrix Changes with Noise
+        distance_matrix += x_t
+        print(f"DISTANCE_MATRIX SHAPE {distance_matrix.shape}")
 
-        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, updated_distance_matrix, None, t)
+        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
         loss = F.l1_loss(predicted_noise, noise)
 
         return loss
         # ####################################################
 
-    def forward(self, x_0, low_quality_positions, other_features, noise):
+    def forward(self, x_0, other_features, noise):
         """
         Acts as a wrapper for p_losses.
         Args:
-            x_0: Batch of initial deltas between low-quality and high-quality.
+            x_0: (B x N x N) Batch of initial deltas between low-quality and high-quality distance matricies.
             other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
             noise: The noise tensor to use.
         Returns:
             The computed loss.
         """
+
+        print(f"X0 DEVICE: {x_0.device}")
         batch_size = x_0.shape[0]
-        t = torch.randint(self.num_timesteps, size = (batch_size,))
-        return self.p_losses(x_0, low_quality_positions, other_features, t, noise)
+        print(f"X0 SHAPE: {x_0.shape}")
+        t = torch.randint(self.num_timesteps, size = (batch_size,), device = self.device)
+        return self.p_losses(x_0, other_features, t, noise)

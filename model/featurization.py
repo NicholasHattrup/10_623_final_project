@@ -272,19 +272,16 @@ def mol_collate_func(batch):
 
     max_size = 0
     for molecule in batch:
-        if type(molecule.y[0]) == np.ndarray:
-            labels.append(molecule.y[0])
-        else:
-            labels.append(molecule.y)
         if molecule.adjacency_matrix.shape[0] > max_size:
             max_size = molecule.adjacency_matrix.shape[0]
 
     for molecule in batch:
+        labels.append(pad_array(molecule.y, (max_size, max_size)))
         adjacency_list.append(pad_array(molecule.adjacency_matrix, (max_size, max_size)))
         distance_list.append(pad_array(molecule.distance_matrix, (max_size, max_size)))
         features_list.append(pad_array(molecule.node_features, (max_size, molecule.node_features.shape[1])))
 
-    return [FloatTensor(features) for features in (adjacency_list, features_list, distance_list, labels)]
+    return [FloatTensor(features) for features in (np.array(adjacency_list), np.array(features_list), np.array(distance_list), np.array(labels))]
 
 
 def construct_dataset(x_all, y_all):
