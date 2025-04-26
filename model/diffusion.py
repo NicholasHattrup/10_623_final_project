@@ -202,23 +202,26 @@ class Diffusion(nn.Module):
         x_t = mu + extract(self.op_sqrt_a_bar, t, x_0.shape) * noise
         return x_t
 
-    def p_losses(self, x_0, other_features, t, noise, batch_mask):
+    def p_losses(self, x_0, low_quality_positions, other_features, t, noise):
         """
         Computes the loss for the forward diffusion.
         Args:
-            x_0: Batch of initial deltas between low-quality and high-quality.
+            x_0: (B x N x 3) Batch of initial deltas between low-quality and high-quality.
+            low_quality_positions : (B x N x 3) initial low-quality positions
             other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
-            t: 1D tensor containing a batch of time indices to compute the loss at.
-            noise: The noise tensor to use.
+            t: (B,) 1D tensor containing a batch of time indices to compute the loss at.
+            noise: (B x N x 3) The noise tensor to use.
         Returns:
             The computed loss.
         """
         x_t = self.q_sample(x_0, t, noise)
         adjacency_matrix, node_features, distance_matrix = other_features
+        batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
 
-        #* Need to re-compute distance matrix here given the noise
-        #* Which needs one of the structures passed in 
-        updated_distance_matrix = 
+        #* Re-compute distance matrix with noise
+        #* THIS IS PROBABLY SLOW
+        noised_positions = low_quality_positions + x_t
+        updated_distance_matrix = torch.cdist(noised_positions, noised_positions)
 
         predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, updated_distance_matrix, None, t)
         loss = F.l1_loss(predicted_noise, noise)
@@ -226,7 +229,7 @@ class Diffusion(nn.Module):
         return loss
         # ####################################################
 
-    def forward(self, x_0, other_features, noise, batch_mask):
+    def forward(self, x_0, low_quality_positions, other_features, noise):
         """
         Acts as a wrapper for p_losses.
         Args:
@@ -238,4 +241,4 @@ class Diffusion(nn.Module):
         """
         batch_size = x_0.shape[0]
         t = torch.randint(self.num_timesteps, size = (batch_size,))
-        return self.p_losses(x_0, other_features, t, noise, batch_mask)
+        return self.p_losses(x_0, low_quality_positions, other_features, t, noise)

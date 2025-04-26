@@ -14,6 +14,8 @@ import wandb
 from datetime import date
 from rdkit import Chem
 from rdkit.Chem import rdMolAlign
+from sklearn.metrics import pairwise_distances
+
 
 from sklearn.model_selection import train_test_split
 
@@ -122,6 +124,9 @@ def get_mol_delta(mol1, mol2):
 
     return delta
 
+def get_rdkit_positions(mol):
+    return np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z] for k in range(mol.GetNumAtoms())])
+
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
         for ss in tr_dataset:
@@ -141,11 +146,13 @@ def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch)
         model.train()
         optimizer.zero_grad()
         for i, batch in enumerate(bar):
-            other_features, delta = batch
-            batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
-
-            pred_delta = model(delta, other_features, batch_mask, None)
-
+            
+            # Unpack batch
+            other_features, low_quality_positions, delta = batch
+            # Sample noise
+            noise = torch.randn(delta.shape, device = delta.device)
+            # Evaluate Loss
+            training_loss = model(delta, low_quality_positions, other_features, noise)
 
             fabric.backward(training_loss)
 
@@ -154,24 +161,14 @@ def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch)
 
 def evaluate(cfg, dataloader, criterion, model, fabric, dataset : str):
 
-
     model.eval()
     loss = 0.0
+
     with torch.no_grad():
         for batch in tqdm(dataloader, desc = "Evaluation"):
-            adjacency_matrix, node_features, distance_matrix, quantum_structure = batch
-            batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
-
-
-
-            #* ALSO NEED TO UPDATE THIS TO BE LIKE DIFFUSION IN HW2
-            pred_delta = model(node_features, batch_mask, adjacency_matrix, distance_matrix, None)
-            
-
-            loss += criterion(predicted_coords, quantum_coords)
-
-            #* CALCULATE RMSE FOR WHOLE TRAJECTORY??
-
+            other_features, low_quality_positions, delta = batch
+            noise = torch.randn(delta.shape, device = delta.device)
+            loss += model(delta, low_quality_positions, other_features, noise)
 
     return loss/len(dataloader)
 
@@ -227,12 +224,12 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
 
     # Generate RDKit Molecules with ETKDGv3
     low_quality_mols = {ss : Chem.RemoveHs(generate_molecule_from_smiles(ss)) for ss in tqdm(smiles_strs, desc = "Low-Quality Structures")}
+    low_quality_positions = {ss : get_rdkit_positions(mol) for mol in low_quality_mols.values()}
 
     deltas = {ss : get_mol_delta(low_quality_mols[ss], dft_molecules[ss]) for ss in smiles_strs}
 
     # Calculate Molecule Features (atomic number, number of neighbors, number of hydrogens, formal charge)
     # featurize_mol returns tuple of (node_features, adj_matrix, distance_matrix)
-
     if cfg.features_path is None:
         low_quality_mol_features = {ss : featurize_mol(lqm, False, True) for ss,lqm in tqdm(low_quality_mols.items(), desc = "Featurizing")}
     else:
@@ -250,9 +247,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
     print(f"There are testing clusters: {len(test_smiles)}")
 
     # Setup data in format MAT expects
-    X_train = [low_quality_mol_features[ss] for ss in train_smiles]
-    X_val = [low_quality_mol_features[ss] for ss in val_smiles]
-    X_test = [low_quality_mol_features[ss] for ss in test_smiles]
+    X_train = [(low_quality_mol_features[ss], low_quality_positions[ss])  for ss in train_smiles]
+    X_val = [(low_quality_mol_features[ss], low_quality_positions[ss]) for ss in val_smiles]
+    X_test = [(low_quality_mol_features[ss], low_quality_positions[ss]) for ss in test_smiles]
     Y_train = [deltas[ss] for ss in train_smiles]
     Y_val = [deltas[ss] for ss in val_smiles]
     Y_test = [deltas[ss] for ss in test_smiles]

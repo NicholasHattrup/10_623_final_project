@@ -2,7 +2,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from ase import Atoms
 from ase.optimize import LBFGS
-from rdkit.Chem import rdMolAlign
+from rdkit.Chem import rdMolAlign, rdDetermineBonds
 from rdkit.Geometry import Point3D
 from ase.calculators.emt import EMT
 from mace.calculators import mace_off
@@ -14,27 +14,32 @@ import argparse
 
 class MyMolecule:
 
-    def __init__(self, symbols : list[str], positions : np.ndarray):
+    def __init__(self, symbols : list[str], positions : np.ndarray, smiles : str):
         self.symbols = symbols
         self.positions = positions
+        self.smiles = smiles
 
     
     def rmse(self, other : "MyMolecule"):
         return rdMolAlign.AlignMol(self.to_rdkit(), other.to_rdkit())
     
     def to_rdkit(self):
-        rw = Chem.RWMol()
-        for s in self.symbols:
-            rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
+        try:
+            mol = Chem.MolFromSmiles(self.smiles) # start from smiles to get bonds correct
 
-        # ---- 3.  add a conformer with 3‑D coordinates -------------
-        conf = Chem.Conformer(len(self.symbols))
-        for i, (x, y, z) in enumerate(self.positions):
-            conf.SetAtomPosition(i, Point3D(x, y, z))
-        rw.AddConformer(conf, assignId=True)
+            # Create atom objects and set positions
+            conf = Chem.Conformer(len(self.positions))
+            for i, pos in enumerate(self.positions):
+                atom = mol.GetAtomWithIdx(i)
+                conf.SetAtomPosition(i, pos)
 
-        mol = rw.GetMol()
-        Chem.SanitizeMol(mol)  
+            mol.AddConformer(conf)
+            AllChem.ConnectTheDots(mol)
+        except Exception as e:
+            print(self.symbols)
+            print(self.positions)
+            raise e
+
         return mol
     
     def to_ase(self, calculator):
@@ -144,7 +149,7 @@ def parse_molecules(path : os.PathLike):
             coords.append([x,y,z])
         i += 1 # skip empty line
         
-        entries[smiles] = MyMolecule(symbols, np.array(coords))
+        entries[smiles] = MyMolecule(symbols, np.array(coords), smiles)
     
     return entries
 
