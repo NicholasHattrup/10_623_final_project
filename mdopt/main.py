@@ -22,23 +22,24 @@ class MyMolecule:
     
     def rmse(self, other : "MyMolecule"):
         return rdMolAlign.AlignMol(self.to_rdkit(), other.to_rdkit())
-    
+
     def to_rdkit(self):
         try:
-            mol = Chem.MolFromSmiles(self.smiles) # start from smiles to get bonds correct
+            rw = Chem.RWMol()
+            for s in self.symbols:
+                rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
 
-            # Create atom objects and set positions
-            conf = Chem.Conformer(len(self.positions))
-            for i, pos in enumerate(self.positions):
-                atom = mol.GetAtomWithIdx(i)
-                conf.SetAtomPosition(i, pos)
+            # ---- 3.  add a conformer with 3‑D coordinates -------------
+            conf = Chem.Conformer(len(self.symbols))
+            for i, (x, y, z) in enumerate(self.positions):
+                conf.SetAtomPosition(i, Point3D(x, y, z))
+            rw.AddConformer(conf, assignId=True)
 
-            mol.AddConformer(conf)
-            AllChem.ConnectTheDots(mol)
+            mol = rw.GetMol()
+            Chem.SanitizeMol(mol)
         except Exception as e:
-            print(self.symbols)
-            print(self.positions)
-            raise e
+            # print(f"Failed to convert {self.smiles} to rdkit geometry")
+            return None
 
         return mol
     
@@ -64,9 +65,13 @@ def rdkit_mol_to_ase_atoms(mol, calculator):
 
 def generate_molecule_from_smiles(smiles_str : str):
     params = AllChem.ETKDGv3()
-    mol = Chem.AddHs(Chem.MolFromSmiles(smiles_str))
-    AllChem.EmbedMolecule(mol, params)
-    return mol
+    mol = Chem.MolFromSmiles(smiles_str)
+    if mol is not None:
+        mol = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol, params)
+        return mol
+    else:
+        return None
 
 def ase_optimize_molecule(
         mol : Atoms,

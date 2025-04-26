@@ -23,7 +23,7 @@ from sklearn.model_selection import train_test_split
 from wandb.integration.lightning.fabric import WandbLogger
 
 from mdopt import generate_molecule_from_smiles, parse_molecules
-from model import make_model, construct_loader, featurize_mol
+from model import make_model, construct_loader, featurize_mol, Diffusion
 
 
 @dataclass
@@ -105,8 +105,23 @@ class TrainConfig:
         if self.checkpoint_interval > self.n_epochs:
             self.checkpoint_interval = self.n_epochs
 
+def pos_sym_to_rdkit(symbols, positions):
+    rw = Chem.RWMol()
+    for s in symbols:
+        rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
+
+    # ---- 3.  add a conformer with 3‑D coordinates -------------
+    conf = Chem.Conformer(len(symbols))
+    for i, (x, y, z) in enumerate(positions):
+        conf.SetAtomPosition(i, Point3D(x, y, z))
+    rw.AddConformer(conf, assignId=True)
+
+    mol = rw.GetMol()
+    Chem.SanitizeMol(mol)
+    return mol
+
 # Takes two rdkit molecules and calculates difference in their positions
-def get_mol_delta(mol1, mol2):
+def get_mol_delta(positions, symbols, rdkit_mol):
     rdMolAlign.AlignMol(mol1, mol2)
 
     conf1 = mol1.GetConformer()
@@ -123,9 +138,6 @@ def get_mol_delta(mol1, mol2):
     delta = positions1 - positions2
 
     return delta
-
-def get_rdkit_positions(mol):
-    return np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z] for k in range(mol.GetNumAtoms())])
 
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
@@ -213,31 +225,28 @@ def load_model(model_config : ModelConfig):
 
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
 
-    print("LOADING MOLECULES")
+    print("LOADING QUANTUM MOLECULES")
 
-    # Load Quantum Dataset
+    # Load Quantum Dataset and convert to RDKit Molecules
     dft_molecules = parse_molecules(cfg.quantum_datapath)
-    dft_molecules = {k : Chem.RemoveHs(v.to_rdkit()) for k,v in dft_molecules.items()}
+    original_len = len(dft_molecules)
+    dft_molecules = {k : v.to_rdkit() for k,v in dft_molecules.items()}
+
+    # Remove failed cases and remove hydrogens from the others
+    dft_molecules = {k : Chem.RemoveHs(v) for k,v in dft_molecules.items() if dft_molecules[k] is not None}
     smiles_strs = dft_molecules.keys()
 
-    print("LOADED MOLECULES")
+    print(f"Failed to construct geometries for {len(dft_molecules)}, succeded for {original_len - len(dft_molecules)}")
+    print("LOADED QUANTUM MOLECULES")
 
-    # Generate RDKit Molecules with ETKDGv3
-    low_quality_mols = {ss : Chem.RemoveHs(generate_molecule_from_smiles(ss)) for ss in tqdm(smiles_strs, desc = "Low-Quality Structures")}
-    low_quality_positions = {ss : get_rdkit_positions(mol) for mol in low_quality_mols.values()}
+    low_quality_features = np.load(cfg.features_path)
+    print("LOADED LOw-QUALITY MOLECULES")
 
-    deltas = {ss : get_mol_delta(low_quality_mols[ss], dft_molecules[ss]) for ss in smiles_strs}
+    # Take intersection of the low quality and quantum molecules
+    smiles_strs = deltas.keys()
 
-    # Calculate Molecule Features (atomic number, number of neighbors, number of hydrogens, formal charge)
-    # featurize_mol returns tuple of (node_features, adj_matrix, distance_matrix)
-    if cfg.features_path is None:
-        low_quality_mol_features = {ss : featurize_mol(lqm, False, True) for ss,lqm in tqdm(low_quality_mols.items(), desc = "Featurizing")}
-    else:
-        with open(cfg.features_path, "rb") as f:
-            low_quality_mol_features = pickle.load(f)
-
-    # Check smiles in low quality match quantum
-    assert set(low_quality_mol_features.keys()) == set(smiles_strs), "Smiles in quantum do not match smiles in low quality"
+    #! NEED TO UPDATE THIS FUNCTION TO WORK WITH ONE INPUT AS JUST AN ARRAY
+    deltas = {ss : get_mol_delta(low_quality_features[ss]["positions"], low_quality_features[ss]["symbols"], dft_molecules[ss]) for ss in smiles_strs}
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
