@@ -24,6 +24,7 @@ from wandb.integration.lightning.fabric import WandbLogger
 
 from mdopt import generate_molecule_from_smiles, parse_molecules
 from model import make_model, construct_loader, featurize_mol, Diffusion
+from mdopt.align import kabsch_weighted_fit
 
 
 @dataclass
@@ -139,6 +140,13 @@ def get_mol_delta(positions, symbols, rdkit_mol):
 
     return delta
 
+
+def get_mol_delta_vnick(src_xyz, tgt_xyz):
+        src_xyz, rmsd_align = kabsch_weighted_fit(src_xyz, tgt_xyz, return_rmsd=True)
+        return src_xyz - tgt_xyz, rmsd_align
+
+
+
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
         for ss in tr_dataset:
@@ -247,6 +255,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
 
     #! NEED TO UPDATE THIS FUNCTION TO WORK WITH ONE INPUT AS JUST AN ARRAY
     deltas = {ss : get_mol_delta(low_quality_features[ss]["positions"], low_quality_features[ss]["symbols"], dft_molecules[ss]) for ss in smiles_strs}
+
+    # My version
+    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in smiles_strs}
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
