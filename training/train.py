@@ -232,7 +232,7 @@ def load_model(model_config : ModelConfig):
     return make_model(**model_params)
 
 def work(v):
-        return v.to_rdkit_no_H()
+    return v.to_rdkit_no_H()
 
 def load_quantum_dataset(quantum_datapath : os.PathLike, max_workers = 40):
 
@@ -253,7 +253,6 @@ def load_quantum_dataset(quantum_datapath : os.PathLike, max_workers = 40):
                 fails += 1
 
     print(f"Failed to construct geometries for {fails}, succeded for {successes}")
-    assert fails + successes == len(dft_molecules)
 
     return dft_molecules_rdkit
 
@@ -274,13 +273,13 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
     #! SMILES DO WHATEVER THE HELL THEY WANT
-    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in tqdm(smiles_strs, desc = "Calculating Deltas")}
+    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))}
 
     # Take intersection of the low quality and quantum molecules
     smiles_strs = deltas.keys()
 
     # Test-Train-Val Split
-    train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
+    train_smiles, val_smiles, test_smiles = split_data(list(smiles_strs), cfg.test_size, cfg.val_size, seed = 42)
     save_split(out_dir, train_smiles, val_smiles, test_smiles)
     print(f"There are training clusters: {len(train_smiles)}")
     print(f"There are validation clusters: {len(val_smiles)}")

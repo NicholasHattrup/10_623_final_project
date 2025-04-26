@@ -45,7 +45,7 @@ class MyMolecule:
     def to_rdkit_no_H(self):
         try:
             rw = Chem.RWMol()
-            conf = Chem.Conformer(np.sum(np.array(self.symbols) != "H"))
+            conf = Chem.Conformer(int(np.sum(np.array(self.symbols) != "H")))
             mol_idx = 0
             for (atom_i, s) in enumerate(self.symbols):
                 if s != "H":
@@ -58,7 +58,7 @@ class MyMolecule:
             mol = rw.GetMol()
             Chem.SanitizeMol(mol)
         except Exception as e:
-            # print(f"Failed to convert {self.smiles} to rdkit geometry")
+            print(f"Failed to convert {self.smiles} to rdkit geometry")
             return None
 
         return mol
