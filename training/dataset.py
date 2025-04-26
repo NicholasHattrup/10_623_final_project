@@ -10,10 +10,13 @@ from model import featurize_mol
 
 
 def featurize_low_quality_mols(smiles_str : str):
-    mol = generate_molecule_from_smiles(smiles_str)
+    mol = Chem.RemoveHs(generate_molecule_from_smiles(smiles_str))
     if mol is not None:
-        node_features, adj_matrix, dist_matrix, positions, symbols = featurize_mol(mol, True)
-        return smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols
+        try:
+            node_features, adj_matrix, dist_matrix, positions, symbols = featurize_mol(mol, True)
+            return smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols
+        except Exception as e:
+            return smiles_str, None, None, None, None, None
     else:
         return smiles_str, None, None, None, None, None
 
@@ -42,7 +45,7 @@ def main():
                     "positions" : positions,
                     "symbols" : symbols
                 }
-                low_quality_mol_data[ss] = data
+                low_quality_mol_data[smiles_str] = data
             else:
                 fails += 1
 

@@ -121,7 +121,7 @@ def featurize_mol(mol, one_hot_formal_charge):
         node_features.append(get_atom_features(atom, one_hot_formal_charge))
         symbols.append(atom.GetSymbol())
 
-    node_features = np.array(atom_data)
+    node_features = np.array(node_features)
     symbols = np.array(symbols)
 
     adj_matrix = np.eye(num_atoms)
@@ -133,7 +133,8 @@ def featurize_mol(mol, one_hot_formal_charge):
     conf = mol.GetConformer()
     pos_matrix = np.array([[conf.GetAtomPosition(k).x, conf.GetAtomPosition(k).y, conf.GetAtomPosition(k).z]
                            for k in range(num_atoms)])
-    dist_matrix = torch.cdist(pos_matrix, pos_matrix)
+    pos_tensor = torch.from_numpy(pos_matrix)
+    dist_matrix = torch.cdist(pos_tensor, pos_tensor)
 
     return node_features, adj_matrix, dist_matrix, pos_matrix, symbols
 
