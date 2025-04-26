@@ -72,8 +72,6 @@ class Diffusion(nn.Module):
         self.num_timesteps = int(timesteps)
         self.device = model.encoder.layers[0].self_attn.linears[0].weight.device
 
-        print(f"MODEL DEVICE {self.device}")
-
         """
         Initializes the diffusion process.
             1. Setup the schedule for the diffusion process.

@@ -19,6 +19,8 @@ from rdkit.Chem import MolFromSmiles
 from sklearn.metrics import pairwise_distances
 from torch.utils.data import Dataset
 
+import torch.multiprocessing as mp
+
 use_cuda = torch.cuda.is_available()
 use_mps = torch.backends.mps.is_available()
 FloatTensor = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
@@ -282,7 +284,7 @@ def mol_collate_func(batch):
         # features_list.append(pad_array(molecule.node_features, (max_size, d_atom)))
         features_list.append(pad_array(molecule.node_features, (max_size, molecule.node_features.shape[1])))
 
-    return [FloatTensor(features) for features in (np.array(adjacency_list), np.array(features_list), np.array(distance_list), np.array(labels))]
+    return [FloatTensor(features) for features in (adjacency_list, features_list, distance_list, labels)]
 
 
 def construct_dataset(x_all, y_all):
@@ -313,8 +315,12 @@ def construct_loader(x, y, batch_size, shuffle=True):
         A DataLoader object that yields batches of padded molecule features.
     """
     data_set = construct_dataset(x, y)
+    # ctx = mp.get_context("spawn")
+
     loader = torch.utils.data.DataLoader(dataset=data_set,
                                          batch_size=batch_size,
                                          collate_fn=mol_collate_func,
                                          shuffle=shuffle)
+                                        #  num_workers = 4,
+                                        #  multiprocessing_context = ctx)
     return loader

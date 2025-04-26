@@ -277,30 +277,30 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     # Load Quantum Dataset and convert to RDKit Molecules
     print("LOADING QUANTUM MOLECULES")
-    dft_mol_path = os.path.join(datapath, "dft_molecules.pkl")
-    dft_molecules = load_quantum_dataset(dft_mol_path, cfg.quantum_datapath, max_workers)
-    smiles_strs = dft_molecules.keys()
+    # dft_mol_path = os.path.join(datapath, "dft_molecules.pkl")
+    # dft_molecules = load_quantum_dataset(dft_mol_path, cfg.quantum_datapath, max_workers)
+    # dft_molecules = parse_molecules(cfg.quantum_datapath)
+    with open(cfg.quantum_datapath, "rb") as f:
+        dft_dist_matricies = pickle.load(f)
+    smiles_strs = dft_dist_matricies.keys()
     print("LOADED QUANTUM MOLECULES")
 
     print("LOADING LOW-QUALITY MOLECULES")
     with open(cfg.features_path, "rb") as f:
         low_quality_features = pickle.load(f)
     print("LOADED LOw-QUALITY MOLECULES")
-
-
+ 
     #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
     #! SMILES DO WHATEVER THE HELL THEY WANT
-    # bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
-    # deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in bar}
+    bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
+    deltas = {ss : low_quality_features[ss][-1] - dft_dist_matricies[ss] for ss in bar}
 
     # Take intersection of the low quality and quantum molecules
     # smiles_strs = deltas.keys()
 
     #! some fake data while nick makes the correct data
-    smiles_strs = ["CO", "CC", "CCC", "CCCC"]
-    deltas = {ss : np.random.randn(len(ss), len(ss)) for ss in smiles_strs} #* fake distance matricies
-
-    #! NEED TO PAD DELTAS 
+    # smiles_strs = ["CO", "CC", "CCC", "CCCC"]
+    # deltas = {ss : np.random.randn(len(ss), len(ss)) for ss in smiles_strs} #* fake distance matricies
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(list(smiles_strs), cfg.test_size, cfg.val_size, seed = 42)
