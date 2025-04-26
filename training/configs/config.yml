@@ -1,6 +1,6 @@
 quantum_datapath: "/mnt/mntsdb/genai/10_623_final_project/QCDGE.xyz"
 outpath: "/mnt/mntsdb/genai/10_623_final_project/training/training_runs"
-features_path: "/mnt/mntsdb/genai/10_623_final_project/low_quality_mol_features.pkl"
+features_path: "/mnt/mntsdb/genai/10_623_final_project/low_quality_features.npz"
 n_epochs: 5
 batch_size: 8 
 lr: 4e-4

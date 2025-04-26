@@ -25,7 +25,7 @@ def featurize_low_quality_mols(smiles_str : str):
 def main():
 
     quantum_datapath = "/mnt/mntsdb/genai/10_623_final_project/QCDGE.xyz"
-    max_workers = 40
+    max_workers = 10
 
     dft_molecules = parse_molecules(quantum_datapath)
     smiles_strs = dft_molecules.keys()
