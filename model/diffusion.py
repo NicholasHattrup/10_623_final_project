@@ -202,7 +202,7 @@ class Diffusion(nn.Module):
         x_t = mu + extract(self.op_sqrt_a_bar, t, x_0.shape) * noise
         return x_t
 
-    def p_losses(self, x_0, other_features, t, noise):
+    def p_losses(self, x_0, other_features, t, noise, batch_mask):
         """
         Computes the loss for the forward diffusion.
         Args:
@@ -214,13 +214,19 @@ class Diffusion(nn.Module):
             The computed loss.
         """
         x_t = self.q_sample(x_0, t, noise)
-        predicted_noise = self.model(x_t, other_features, t)
+        adjacency_matrix, node_features, distance_matrix = other_features
+
+        #* Need to re-compute distance matrix here given the noise
+        #* Which needs one of the structures passed in 
+        updated_distance_matrix = 
+
+        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, updated_distance_matrix, None, t)
         loss = F.l1_loss(predicted_noise, noise)
 
         return loss
         # ####################################################
 
-    def forward(self, x_0, other_features, noise):
+    def forward(self, x_0, other_features, noise, batch_mask):
         """
         Acts as a wrapper for p_losses.
         Args:
@@ -232,4 +238,4 @@ class Diffusion(nn.Module):
         """
         batch_size = x_0.shape[0]
         t = torch.randint(self.num_timesteps, size = (batch_size,))
-        return self.p_losses(x_0, other_features, t, noise)
+        return self.p_losses(x_0, other_features, t, noise, batch_mask)

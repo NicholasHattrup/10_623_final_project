@@ -8,11 +8,13 @@ from dataclasses import dataclass, asdict, field
 import torch.nn.functional as F
 from tqdm import tqdm
 import os
-import yaml
+import yaml, pickle
 import numpy as np
 import wandb
 from datetime import date
 from rdkit import Chem
+from rdkit.Chem import rdMolAlign
+
 from sklearn.model_selection import train_test_split
 
 
@@ -42,15 +44,23 @@ class ModelConfig:
     dropout : float = field(
         default = 0.1
     )
+    timesteps : int = field(
+        default = 1000,
+        metadata = {"description" : "Number of diffusion timesteps"}
+    )
 
 
 @dataclass 
 class TrainConfig:
-    datapath : str = field(
-        metadata = {'description' : "Output path of create_dataset.py"}
+    quantum_datapath : str = field(
+        metadata = {'description' : "Path to xyz file of quantum structures"}
     )
     outpath : str = field(
         metadata = {'description' : "Folder where output directory will be created to save results."}
+    )
+    features_path : str = field(
+        default = None,
+        metadata = {'description' : "Path to pre-computed features for dataset"}
     )
     n_epochs : int = field(
         default = 5
@@ -93,7 +103,24 @@ class TrainConfig:
         if self.checkpoint_interval > self.n_epochs:
             self.checkpoint_interval = self.n_epochs
 
+# Takes two rdkit molecules and calculates difference in their positions
+def get_mol_delta(mol1, mol2):
+    rdMolAlign.AlignMol(mol1, mol2)
 
+    conf1 = mol1.GetConformer()
+    conf2 = mol2.GetConformer()
+
+    # Check same number of atoms
+    if conf1.GetNumAtoms() != conf2.GetNumAtoms():
+        raise ValueError("Molecules must have the same number of atoms.")
+
+    # Compute delta
+    positions1 = np.array([list(conf1.GetAtomPosition(i)) for i in range(conf1.GetNumAtoms())])
+    positions2 = np.array([list(conf2.GetAtomPosition(i)) for i in range(conf2.GetNumAtoms())])
+
+    delta = positions1 - positions2
+
+    return delta
 
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
@@ -114,17 +141,16 @@ def train_one_epoch(dataloader, criterion, model, optimizer, fabric, cfg, epoch)
         model.train()
         optimizer.zero_grad()
         for i, batch in enumerate(bar):
-            adjacency_matrix, node_features, distance_matrix, _ = batch
+            other_features, delta = batch
             batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
 
-            pred_delta = model(node_features, batch_mask, adjacency_matrix, distance_matrix, None)
+            pred_delta = model(delta, other_features, batch_mask, None)
 
-            #* Need to update this to mimic the HW2 training loop with noise etc.
-            training_loss = criterion(...)
 
             fabric.backward(training_loss)
 
             wandb.log({"training_loss" : training_loss})
+
 
 def evaluate(cfg, dataloader, criterion, model, fabric, dataset : str):
 
@@ -133,8 +159,10 @@ def evaluate(cfg, dataloader, criterion, model, fabric, dataset : str):
     loss = 0.0
     with torch.no_grad():
         for batch in tqdm(dataloader, desc = "Evaluation"):
-            adjacency_matrix, node_features, distance_matrix, _ = batch
+            adjacency_matrix, node_features, distance_matrix, quantum_structure = batch
             batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
+
+
 
             #* ALSO NEED TO UPDATE THIS TO BE LIKE DIFFUSION IN HW2
             pred_delta = model(node_features, batch_mask, adjacency_matrix, distance_matrix, None)
@@ -191,7 +219,8 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
     print("LOADING MOLECULES")
 
     # Load Quantum Dataset
-    dft_molecules = parse_molecules(cfg.datapath)
+    dft_molecules = parse_molecules(cfg.quantum_datapath)
+    dft_molecules = {k : Chem.RemoveHs(v.to_rdkit()) for k,v in dft_molecules.items()}
     smiles_strs = dft_molecules.keys()
 
     print("LOADED MOLECULES")
@@ -199,10 +228,19 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
     # Generate RDKit Molecules with ETKDGv3
     low_quality_mols = {ss : Chem.RemoveHs(generate_molecule_from_smiles(ss)) for ss in tqdm(smiles_strs, desc = "Low-Quality Structures")}
 
+    deltas = {ss : get_mol_delta(low_quality_mols[ss], dft_molecules[ss]) for ss in smiles_strs}
 
     # Calculate Molecule Features (atomic number, number of neighbors, number of hydrogens, formal charge)
     # featurize_mol returns tuple of (node_features, adj_matrix, distance_matrix)
-    low_quality_mol_features = {ss : featurize_mol(lqm, False, True) for ss,lqm in tqdm(low_quality_mols.items(), desc = "Featurizing")}
+
+    if cfg.features_path is None:
+        low_quality_mol_features = {ss : featurize_mol(lqm, False, True) for ss,lqm in tqdm(low_quality_mols.items(), desc = "Featurizing")}
+    else:
+        with open(cfg.features_path, "rb") as f:
+            low_quality_mol_features = pickle.load(f)
+
+    # Check smiles in low quality match quantum
+    assert set(low_quality_mol_features.keys()) == set(smiles_strs), "Smiles in quantum do not match smiles in low quality"
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)
@@ -215,9 +253,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
     X_train = [low_quality_mol_features[ss] for ss in train_smiles]
     X_val = [low_quality_mol_features[ss] for ss in val_smiles]
     X_test = [low_quality_mol_features[ss] for ss in test_smiles]
-    Y_train = [dft_molecules[ss] for ss in train_smiles]
-    Y_val = [dft_molecules[ss] for ss in val_smiles]
-    Y_test = [dft_molecules[ss] for ss in test_smiles]
+    Y_train = [deltas[ss] for ss in train_smiles]
+    Y_val = [deltas[ss] for ss in val_smiles]
+    Y_test = [deltas[ss] for ss in test_smiles]
 
     train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
     val_dl = construct_loader(X_val, Y_val, 1, shuffle = False)
@@ -225,19 +263,18 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
     train_dl, val_dl, test_dl = fabric.setup_dataloaders(train_dl, val_dl, test_dl)
 
 
-    model = load_model(cfg.model_config)
-
-    criterion = None #TODO IMPLEMENT DIFFUSION LOSS
+    noise_model = load_model(cfg.model_config)
+    diffusion_model = Diffusion(noise_model, cfg.model_config.d_atom, cfg.model_config.timesteps)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(model.parameters(), lr = cfg.lr)
-    model, optimizer = fabric.setup(model, optimizer)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = cfg.lr)
+    model, optimizer = fabric.setup(diffusion_model, optimizer)
 
 
     for epoch in range(cfg.n_epochs):
-        train_one_epoch(train_dl, criterion, model, optimizer, fabric, cfg, epoch)
-        avg_val_loss, avg_metrics = evaluate(cfg, val_dl, criterion, model, fabric, "val")
-        avg_train_loss, avg_train_metrics = evaluate(cfg, train_dl, criterion, model, fabric, "train")
+        train_one_epoch(train_dl, model, optimizer, fabric, cfg, epoch)
+        avg_val_loss, avg_metrics = evaluate(cfg, val_dl, model, fabric, "val")
+        avg_train_loss, avg_train_metrics = evaluate(cfg, train_dl, model, fabric, "train")
 
         fabric.log_dict({"avg_val_loss" : avg_val_loss, "avg_train_loss" : avg_train_loss, "epoch" : epoch})
         fabric.log_dict(avg_metrics)
@@ -249,7 +286,7 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'val_loss' : avg_val_loss,
-                    'dataset' : cfg.datapath
+                    'dataset' : cfg.quantum_datapath
                     }
             savepath = os.path.join(out_dir, f"checkpoint_{epoch}.pt")
             fabric.save(savepath, state)

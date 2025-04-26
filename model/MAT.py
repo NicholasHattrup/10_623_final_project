@@ -29,6 +29,7 @@ def make_model(d_atom, N_encoder_layers=2, d_model=128, h=8, dropout=0.1,
                                  distance_matrix_kernel, use_edge_features, control_edges, integrated_distances)
     ff = PositionwiseFeedForward(d_model, N_dense, dropout, leaky_relu_slope, dense_output_nonlinearity)
     model = GraphTransformer(
+        d_model, 
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout, scale_norm, use_adapter), N_encoder_layers, scale_norm),
         Embeddings(d_model, d_atom, dropout),
         Generator(d_model, aggregation_type, n_output, n_generator_layers, leaky_relu_slope, dropout, scale_norm)
@@ -49,19 +50,63 @@ def make_model(d_atom, N_encoder_layers=2, d_model=128, h=8, dropout=0.1,
     return model
 
 
+def get_timestep_embedding(
+    timesteps: torch.Tensor,
+    embedding_dim: int,
+    flip_sin_to_cos: bool = False,
+    downscale_freq_shift: float = 1,
+    scale: float = 1,
+    max_period: int = 10000,
+):
+    """
+    This matches the implementation in Denoising Diffusion Probabilistic Models: Create sinusoidal timestep embeddings.
+
+    :param timesteps: a 1-D Tensor of N indices, one per batch element.
+                      These may be fractional.
+    :param embedding_dim: the dimension of the output. :param max_period: controls the minimum frequency of the
+    embeddings. :return: an [N x dim] Tensor of positional embeddings.
+    """
+    assert len(timesteps.shape) == 1, "Timesteps should be a 1d-array"
+
+    half_dim = embedding_dim // 2
+    exponent = -math.log(max_period) * torch.arange(
+        start=0, end=half_dim, dtype=torch.float32, device=timesteps.device
+    )
+    exponent = exponent / (half_dim - downscale_freq_shift)
+
+    emb = torch.exp(exponent)
+    emb = timesteps[:, None].float() * emb[None, :]
+
+    # scale embeddings
+    emb = scale * emb
+
+    # concat sine and cosine embeddings
+    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+
+    # flip sine and cosine embeddings
+    if flip_sin_to_cos:
+        emb = torch.cat([emb[:, half_dim:], emb[:, :half_dim]], dim=-1)
+
+    # zero pad
+    if embedding_dim % 2 == 1:
+        emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
+    return emb
+
 class GraphTransformer(nn.Module):
-    def __init__(self, encoder, src_embed, generator):
+    def __init__(self, d_model, encoder, src_embed, generator):
         super(GraphTransformer, self).__init__()
+        self.d_model = d_model
         self.encoder = encoder
         self.src_embed = src_embed
         self.generator = generator
         
-    def forward(self, src, src_mask, adj_matrix, distances_matrix, edges_att):
+    def forward(self, src, src_mask, adj_matrix, distances_matrix, edges_att, times):
         "Take in and process masked src and target sequences."
-        return self.predict(self.encode(src, src_mask, adj_matrix, distances_matrix, edges_att), src_mask)
+        time_embedding = get_timestep_embedding(times, self.d_model)
+        return self.predict(self.encode(src, src_mask, adj_matrix, distances_matrix, edges_att, time_embedding), src_mask)
     
-    def encode(self, src, src_mask, adj_matrix, distances_matrix, edges_att):
-        return self.encoder(self.src_embed(src), src_mask, adj_matrix, distances_matrix, edges_att)
+    def encode(self, src, src_mask, adj_matrix, distances_matrix, edges_att, time_embedding):
+        return self.encoder(self.src_embed(src), src_mask, adj_matrix, distances_matrix, edges_att, time_embedding)
     
     def predict(self, out, out_mask):
         return self.generator(out, out_mask)
@@ -129,8 +174,9 @@ class Encoder(nn.Module):
         self.layers = clones(layer, N)
         self.norm = ScaleNorm(layer.size) if scale_norm else LayerNorm(layer.size)
         
-    def forward(self, x, mask, adj_matrix, distances_matrix, edges_att):
+    def forward(self, x, mask, adj_matrix, distances_matrix, edges_att, time_embedding):
         "Pass the input (and mask) through each layer in turn."
+        x += time_embedding
         for layer in self.layers:
             x = layer(x, mask, adj_matrix, distances_matrix, edges_att)
         return self.norm(x)

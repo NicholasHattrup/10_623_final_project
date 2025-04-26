@@ -4,6 +4,7 @@ datasets/
 *.pt
 *.xyz
 */traiuning_runs/*
+*.pkl
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
