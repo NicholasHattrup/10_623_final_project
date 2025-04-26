@@ -38,8 +38,12 @@ class ModelConfig:
         metadata={"description" : "Number of heads in multi-headed attention"}
     )
     d_atom : int = field(
-        default = 64, 
-        metadata = {"description" : "Maximum number of atoms in a molecule model can accept"}
+        default = 27, 
+        metadata = {"description" : "Atom embed dim, 27 unless you add more atom types"}
+    )
+    max_atoms : int = field(
+        default = 32,
+        metadata = {"description" : "max number of atoms model can handle"}
     )
     d_model : int = field(
         default = 256
@@ -224,7 +228,7 @@ def load_model(model_config : ModelConfig):
     #* I called things in the config
     model_params = {
         "d_atom" : model_config.d_atom,
-        "n_output" : 3*model_config.d_atom, # x, y, z coords for each
+        "n_output" : model_config.max_atoms**2, # will reshape to distance matrix
         "h" : model_config.n_heads,
         "d_model": model_config.d_model,
         "N_encoder_layers" : model_config.n_transformer_blocks,
@@ -335,12 +339,10 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     for epoch in range(cfg.n_epochs):
         train_one_epoch(train_dl, model, optimizer, fabric, cfg, epoch)
-        avg_val_loss, avg_metrics = evaluate(cfg, val_dl, model, fabric, "val")
-        avg_train_loss, avg_train_metrics = evaluate(cfg, train_dl, model, fabric, "train")
+        avg_val_loss = evaluate(cfg, val_dl, model, fabric, "val")
+        avg_train_loss = evaluate(cfg, train_dl, model, fabric, "train")
 
         fabric.log_dict({"avg_val_loss" : avg_val_loss, "avg_train_loss" : avg_train_loss, "epoch" : epoch})
-        fabric.log_dict(avg_metrics)
-        fabric.log_dict(avg_train_metrics)
 
         if epoch > 0 and epoch % (cfg.checkpoint_interval-1) == 0:
             state = {

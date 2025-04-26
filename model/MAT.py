@@ -30,7 +30,7 @@ def make_model(d_atom, N_encoder_layers=2, d_model=128, h=8, dropout=0.1,
     ff = PositionwiseFeedForward(d_model, N_dense, dropout, leaky_relu_slope, dense_output_nonlinearity)
     model = GraphTransformer(
         d_model, 
-        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout, scale_norm, use_adapter), N_encoder_layers, scale_norm),
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout, scale_norm, use_adapter), N_encoder_layers, scale_norm, d_model),
         Embeddings(d_model, d_atom, dropout),
         Generator(d_model, aggregation_type, n_output, n_generator_layers, leaky_relu_slope, dropout, scale_norm)
     )
@@ -169,13 +169,15 @@ def clones(module, N):
 
 class Encoder(nn.Module):
     "Core encoder is a stack of N layers"
-    def __init__(self, layer, N, scale_norm):
+    def __init__(self, layer, N, scale_norm, d_model):
         super(Encoder, self).__init__()
         self.layers = clones(layer, N)
+        self.time_mlp = nn.Linear(d_model, d_model)
         self.norm = ScaleNorm(layer.size) if scale_norm else LayerNorm(layer.size)
         
     def forward(self, x, mask, adj_matrix, distances_matrix, edges_att, time_embedding):
         "Pass the input (and mask) through each layer in turn."
+        time_embedding = self.time_mlp(time_embedding).unsqueeze(1).expand(-1, x.size(1), -1)
         x += time_embedding
         for layer in self.layers:
             x = layer(x, mask, adj_matrix, distances_matrix, edges_att)

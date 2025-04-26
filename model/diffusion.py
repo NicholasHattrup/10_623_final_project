@@ -213,10 +213,22 @@ class Diffusion(nn.Module):
         # Nodes and Connectivity Are Unaffected By Noise
         # Only Distance Matrix Changes with Noise
         distance_matrix += x_t
-        print(f"DISTANCE_MATRIX SHAPE {distance_matrix.shape}")
+        # print(f"DISTANCE_MATRIX SHAPE {distance_matrix.shape}")
+        # print(f"{node_features.shape}")
+        # print(f"{adjacency_matrix.shape}")
+        # print(f"{t.shape}")
 
         predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
-        loss = F.l1_loss(predicted_noise, noise)
+
+        B = predicted_noise.shape[0]
+        N = int(predicted_noise.shape[1]**0.5)
+        pred_noise_square = predicted_noise.view(B, N, N)
+
+        # print(f"NOISE SHAPE {noise.shape}")
+        # print(f"PRED NOISE SHAPE {pred_noise_square.shape}")
+
+        M = noise.shape[-1]
+        loss = F.l1_loss(pred_noise_square[:, :M, :M], noise)
 
         return loss
         # ####################################################
@@ -232,8 +244,8 @@ class Diffusion(nn.Module):
             The computed loss.
         """
 
-        print(f"X0 DEVICE: {x_0.device}")
+        # print(f"X0 DEVICE: {x_0.device}")
         batch_size = x_0.shape[0]
-        print(f"X0 SHAPE: {x_0.shape}")
+        # print(f"X0 SHAPE: {x_0.shape}")
         t = torch.randint(self.num_timesteps, size = (batch_size,), device = self.device)
         return self.p_losses(x_0, other_features, t, noise)

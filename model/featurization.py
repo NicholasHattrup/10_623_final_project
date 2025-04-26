@@ -279,6 +279,7 @@ def mol_collate_func(batch):
         labels.append(pad_array(molecule.y, (max_size, max_size)))
         adjacency_list.append(pad_array(molecule.adjacency_matrix, (max_size, max_size)))
         distance_list.append(pad_array(molecule.distance_matrix, (max_size, max_size)))
+        # features_list.append(pad_array(molecule.node_features, (max_size, d_atom)))
         features_list.append(pad_array(molecule.node_features, (max_size, molecule.node_features.shape[1])))
 
     return [FloatTensor(features) for features in (np.array(adjacency_list), np.array(features_list), np.array(distance_list), np.array(labels))]
