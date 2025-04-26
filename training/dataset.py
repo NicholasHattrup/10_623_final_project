@@ -31,8 +31,9 @@ def main():
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(featurize_low_quality_mols, ss) for ss in smiles_strs]
 
-        for future in tqdm(as_completed(futures), total = len(futures), desc = "Generating Low Quality Molecules"):
-            smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols = future.result()
+        for res in tqdm(as_completed(futures), total = len(futures), desc = "Generating Low Quality Molecules"):
+            res = f.result()
+            smiles_str, node_features, adj_matrix, dist_matrix, positions, symbols = res
             if node_features is not None:
                 data = {
                     "node_features" : node_features, 
