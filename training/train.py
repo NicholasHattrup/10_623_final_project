@@ -15,7 +15,7 @@ from datetime import date
 from rdkit import Chem
 from rdkit.Chem import rdMolAlign
 from sklearn.metrics import pairwise_distances
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from sklearn.model_selection import train_test_split
 
@@ -231,33 +231,53 @@ def load_model(model_config : ModelConfig):
 
     return make_model(**model_params)
 
-def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1):
+def work(v):
+        return v.to_rdkit_no_H()
 
-    print("LOADING QUANTUM MOLECULES")
+def load_quantum_dataset(quantum_datapath : os.PathLike, max_workers = 40):
+
+    dft_molecules = parse_molecules(quantum_datapath)
+
+    fails = 0; successes = 0
+    dft_molecules_rdkit = {}
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(work, v) : ss for ss, v in dft_molecules.items()}
+
+        for f in tqdm(as_completed(futures), desc = "Quantum --> RDKit", total = len(futures)):
+            ss = futures[f]
+            res = f.result()
+            if res is not None:
+                dft_molecules_rdkit[ss] = res
+                successes += 1
+            else:
+                fails += 1
+
+    print(f"Failed to construct geometries for {fails}, succeded for {successes}")
+    assert fails + successes == len(dft_molecules)
+
+    return dft_molecules_rdkit
+
+def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
     # Load Quantum Dataset and convert to RDKit Molecules
-    dft_molecules = parse_molecules(cfg.quantum_datapath)
-    original_len = len(dft_molecules)
-    dft_molecules = {k : v.to_rdkit() for k,v in dft_molecules.items()}
-
-    # Remove failed cases and remove hydrogens from the others
-    dft_molecules = {k : Chem.RemoveHs(v) for k,v in dft_molecules.items() if dft_molecules[k] is not None}
+    print("LOADING QUANTUM MOLECULES")
+    dft_molecules = load_quantum_dataset(cfg.quantum_datapath, max_workers)
     smiles_strs = dft_molecules.keys()
-
-    print(f"Failed to construct geometries for {len(dft_molecules)}, succeded for {original_len - len(dft_molecules)}")
     print("LOADED QUANTUM MOLECULES")
 
-    low_quality_features = np.load(cfg.features_path)
+    # low_quality_features = np.load(cfg.features_path)
+    print("LOADING LOW-QUALITY MOLECULES")
+    with open(cfg.features_path, "rb") as f:
+        low_quality_features = pickle.load(f)
     print("LOADED LOw-QUALITY MOLECULES")
+
+
+    #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
+    #! SMILES DO WHATEVER THE HELL THEY WANT
+    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in tqdm(smiles_strs, desc = "Calculating Deltas")}
 
     # Take intersection of the low quality and quantum molecules
     smiles_strs = deltas.keys()
-
-    #! NEED TO UPDATE THIS FUNCTION TO WORK WITH ONE INPUT AS JUST AN ARRAY
-    deltas = {ss : get_mol_delta(low_quality_features[ss]["positions"], low_quality_features[ss]["symbols"], dft_molecules[ss]) for ss in smiles_strs}
-
-    # My version
-    deltas = {ss : get_mol_delta_vnick(low_quality_features[ss]["positions"], dft_molecules[ss].GetConformer().GetPositions()) for ss in smiles_strs}
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(smiles_strs, cfg.test_size, cfg.val_size, seed = 42)

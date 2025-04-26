@@ -27,12 +27,32 @@ class MyMolecule:
         try:
             rw = Chem.RWMol()
             for s in self.symbols:
-                rw.AddAtom(Chem.Atom(s))          # returns new atom index, not needed here
+                rw.AddAtom(Chem.Atom(s))
 
-            # ---- 3.  add a conformer with 3‑D coordinates -------------
             conf = Chem.Conformer(len(self.symbols))
             for i, (x, y, z) in enumerate(self.positions):
                 conf.SetAtomPosition(i, Point3D(x, y, z))
+            rw.AddConformer(conf, assignId=True)
+
+            mol = rw.GetMol()
+            Chem.SanitizeMol(mol)
+        except Exception as e:
+            # print(f"Failed to convert {self.smiles} to rdkit geometry")
+            return None
+
+        return mol
+
+    def to_rdkit_no_H(self):
+        try:
+            rw = Chem.RWMol()
+            conf = Chem.Conformer(np.sum(np.array(self.symbols) != "H"))
+            mol_idx = 0
+            for (atom_i, s) in enumerate(self.symbols):
+                if s != "H":
+                    rw.AddAtom(Chem.Atom(s))
+                    conf.SetAtomPosition(mol_idx, Point3D(*self.positions[atom_i]))
+                    mol_idx += 1
+
             rw.AddConformer(conf, assignId=True)
 
             mol = rw.GetMol()

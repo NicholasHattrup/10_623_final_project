@@ -1,12 +1,6 @@
-<<<<<<< HEAD
 datapath: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/datasets/QCDGE_RDKit/QCDGE.xyz"
 outpath: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/training/training_runs/"
 datapath_opt: "/Users/nickhattrup/Documents/research/projects/10_623_final_project/datasets/QCDGE_RDKit/RDKit.xyz"
-=======
-quantum_datapath: "/mnt/mntsdb/genai/10_623_final_project/QCDGE.xyz"
-outpath: "/mnt/mntsdb/genai/10_623_final_project/training/training_runs"
-features_path: "/mnt/mntsdb/genai/10_623_final_project/low_quality_features.npz"
->>>>>>> 63596ce6252e86091a99b5377cf72bcb95c44cfd
 n_epochs: 5
 batch_size: 8 
 lr: 4e-4
@@ -19,7 +13,4 @@ model_config:
   n_transformer_blocks: 8
   n_heads: 16
   d_model: 512
-<<<<<<< HEAD
-=======
   timesteps: 1000
->>>>>>> 63596ce6252e86091a99b5377cf72bcb95c44cfd
