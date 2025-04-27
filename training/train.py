@@ -247,58 +247,34 @@ def load_model(model_config : ModelConfig):
 
     return make_model(**model_params)
 
-def work(v):
-    return v.to_rdkit_no_H()
+def load_quantum_dataset(npz_path: str):
+    data = np.load(npz_path, allow_pickle=True)
+    smiles_arr = data['smiles']
+    feats_arr  = data['feats']
+    adj_arr    = data['adj']
+    dist_arr   = data['dist']
+    pos_arr    = data['pos']
+    symbols_arr= data['symbols']
 
-def load_quantum_dataset(dft_mol_path : os.PathLike, quantum_datapath : os.PathLike, max_workers = 40):
+    features = {}
+    pos_sym = {}
+    for i, sm in enumerate(smiles_arr):
+        smiles = str(sm)
+        feats  = feats_arr[i]
+        adj    = adj_arr[i]
+        dist   = dist_arr[i]
+        pos    = pos_arr[i]
+        syms   = symbols_arr[i]
 
-    if not os.path.isfile(dft_mol_path):
-        dft_molecules = parse_molecules(quantum_datapath)
+        try:
+            symbols = [str(x) for x in syms]
+        except TypeError:
+            symbols = [str(syms)]
 
-        fails = 0; successes = 0
-        dft_molecules_rdkit = {}
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(work, v) : ss for ss, v in dft_molecules.items()}
+        features[smiles] = (feats, adj, dist)
+        pos_sym[smiles] = (pos, symbols)
 
-            for f in tqdm(as_completed(futures), desc = "Quantum --> RDKit", total = len(futures)):
-                ss = futures[f]
-                res = f.result()
-                if res is not None:
-                    dft_molecules_rdkit[ss] = res
-                    successes += 1
-                else:
-                    fails += 1
-
-        print(f"Failed to construct geometries for {fails}, succeded for {successes}")
-
-        with open(dft_mol_path, "wb") as f:
-            pickle.dump(dft_molecules_rdkit, f)
-
-        return dft_molecules_rdkit
-    else:
-        with open(dft_mol_path, "rb") as f:
-            dft_molecules_rdkit = pickle.load(f)
-        return dft_molecules_rdkit
-
-
-def filter_hydrogen_atoms(feature_tuple):
-    """Filter out atoms that have a 1 in the 11th position (index 10)."""
-    node_features, adj_matrix, dist_matrix = feature_tuple
-    # Find indices where the 11th element (index 10) is NOT 1
-    indices_to_keep = [i for i, row in enumerate(node_features) if row[10] != 1] #* HYDROGEN EMBEDDED AS 11th index
-    # Filter features
-    filtered_features = [node_features[i] for i in indices_to_keep]
-    # Filter adjacency matrix
-    filtered_adj = []
-    for i in indices_to_keep:
-        filtered_row = [adj_matrix[i][j] for j in indices_to_keep]
-        filtered_adj.append(filtered_row)
-    # Filter distance matrix
-    filtered_dist = []
-    for i in indices_to_keep:
-        filtered_row = [dist_matrix[i][j] for j in indices_to_keep]
-        filtered_dist.append(filtered_row)
-    return (filtered_features, filtered_adj, filtered_dist)
+    return features, pos_sym
 
 # Implementation of LR scheduler suggested in
 # https://arxiv.org/pdf/2002.08264
@@ -328,27 +304,16 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     datapath = os.path.dirname(cfg.features_path)
 
-    # Load Quantum Dataset and convert to RDKit Molecules
     print("LOADING QUANTUM MOLECULES")
-    # dft_mol_path = os.path.join(datapath, "dft_molecules.pkl")
-    # dft_molecules = load_quantum_dataset(dft_mol_path, cfg.quantum_datapath, max_workers)
-    # dft_molecules = parse_molecules(cfg.quantum_datapath)
-    with open(cfg.quantum_datapath, "rb") as f:
-        dft_dist_matricies = pickle.load(f)
-    smiles_strs = dft_dist_matricies.keys()
+    dft_mol_features, dft_pos_sym = load_quantum_dataset(cfg.quantum_datapath) # smiles : (node_features, adj, dist, pos, symbols)
+    smiles_strs = dft_mol_features.keys()
     print("LOADED QUANTUM MOLECULES")
 
     print("LOADING LOW-QUALITY MOLECULES")
     with open(cfg.features_path, "rb") as f:
-        low_quality_features_with_H = pickle.load(f)
+        low_quality_features = pickle.load(f) 
     print("LOADED LOw-QUALITY MOLECULES")
 
-    # low_quality_features_noH = {ss : filter_hydrogen_atoms(low_quality_features_with_H[ss]) for ss in tqdm(smiles_strs, desc = "Filtering Hs")}
-    low_quality_features = low_quality_features_with_H
-
-
-    #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
-    #! SMILES DO WHATEVER THE HELL THEY WANT
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
     deltas = {ss : low_quality_features[ss][-1] - dft_dist_matricies[ss] for ss in bar}
 
@@ -378,9 +343,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"There are testing clusters: {len(test_smiles)}")
 
     # Setup data in format MAT expects
-    X_train = [low_quality_features[ss]  for ss in train_smiles]
-    X_val = [low_quality_features[ss] for ss in val_smiles]
-    X_test = [low_quality_features[ss] for ss in test_smiles]
+    X_train = [dft_mol_features[ss]  for ss in train_smiles] #mol features are same for dft and low quality
+    X_val = [dft_mol_features[ss] for ss in val_smiles]
+    X_test = [dft_mol_features[ss] for ss in test_smiles]
     Y_train = [deltas[ss] for ss in train_smiles]
     Y_val = [deltas[ss] for ss in val_smiles]
     Y_test = [deltas[ss] for ss in test_smiles]
@@ -477,3 +442,58 @@ if __name__ == "__main__":
     main()
 
 
+
+
+
+# def work(v):
+#     return v.to_rdkit_no_H()
+
+# def load_quantum_dataset(dft_mol_path : os.PathLike, quantum_datapath : os.PathLike, max_workers = 40):
+
+#     if not os.path.isfile(dft_mol_path):
+#         dft_molecules = parse_molecules(quantum_datapath)
+
+#         fails = 0; successes = 0
+#         dft_molecules_rdkit = {}
+#         with ProcessPoolExecutor(max_workers=max_workers) as executor:
+#             futures = {executor.submit(work, v) : ss for ss, v in dft_molecules.items()}
+
+#             for f in tqdm(as_completed(futures), desc = "Quantum --> RDKit", total = len(futures)):
+#                 ss = futures[f]
+#                 res = f.result()
+#                 if res is not None:
+#                     dft_molecules_rdkit[ss] = res
+#                     successes += 1
+#                 else:
+#                     fails += 1
+
+#         print(f"Failed to construct geometries for {fails}, succeded for {successes}")
+
+#         with open(dft_mol_path, "wb") as f:
+#             pickle.dump(dft_molecules_rdkit, f)
+
+#         return dft_molecules_rdkit
+#     else:
+#         with open(dft_mol_path, "rb") as f:
+#             dft_molecules_rdkit = pickle.load(f)
+#         return dft_molecules_rdkit
+
+
+# def filter_hydrogen_atoms(feature_tuple):
+#     """Filter out atoms that have a 1 in the 11th position (index 10)."""
+#     node_features, adj_matrix, dist_matrix = feature_tuple
+#     # Find indices where the 11th element (index 10) is NOT 1
+#     indices_to_keep = [i for i, row in enumerate(node_features) if row[10] != 1] #* HYDROGEN EMBEDDED AS 11th index
+#     # Filter features
+#     filtered_features = [node_features[i] for i in indices_to_keep]
+#     # Filter adjacency matrix
+#     filtered_adj = []
+#     for i in indices_to_keep:
+#         filtered_row = [adj_matrix[i][j] for j in indices_to_keep]
+#         filtered_adj.append(filtered_row)
+#     # Filter distance matrix
+#     filtered_dist = []
+#     for i in indices_to_keep:
+#         filtered_row = [dist_matrix[i][j] for j in indices_to_keep]
+#         filtered_dist.append(filtered_row)
+#     return (filtered_features, filtered_adj, filtered_dist)
