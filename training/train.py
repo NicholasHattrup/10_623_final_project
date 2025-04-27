@@ -168,9 +168,10 @@ def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
         bar.set_description(f"Epoch [{epoch+1}/{cfg.n_epochs}]")
 
         model.train()
-        optimizer.zero_grad()
+        
         for i, batch in enumerate(bar):
             
+            optimizer.zero_grad()
             # Unpack batch
             *other_features, delta = batch
             # Sample noise
@@ -179,7 +180,8 @@ def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
             training_loss = model(delta, other_features, noise)
 
             fabric.backward(training_loss)
-
+            optimizer.step()
+            
             wandb.log({"training_loss" : training_loss})
             bar.set_postfix(loss=training_loss.item())
 
