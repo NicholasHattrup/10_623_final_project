@@ -155,6 +155,19 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge, positions=None):
     pos_tensor = torch.from_numpy(pos_matrix)
     dist_matrix = torch.cdist(pos_tensor, pos_tensor)
 
+    m = np.zeros((node_features.shape[0] + 1, node_features.shape[1] + 1))
+    m[1:, 1:] = node_features
+    m[0, 0] = 1.
+    node_features = m
+
+    m = np.zeros((adj_matrix.shape[0] + 1, adj_matrix.shape[1] + 1))
+    m[1:, 1:] = adj_matrix
+    adj_matrix = m
+
+    m = np.full((dist_matrix.shape[0] + 1, dist_matrix.shape[1] + 1), 1e6)
+    m[1:, 1:] = dist_matrix
+    dist_matrix = m
+
     return node_features, adj_matrix, dist_matrix, pos_matrix, symbols
 
 

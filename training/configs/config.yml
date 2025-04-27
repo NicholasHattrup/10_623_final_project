@@ -2,8 +2,8 @@ quantum_datapath: "/mnt/mntsdb/genai/10_623_final_project/distances.pkl"
 outpath: "/mnt/mntsdb/genai/10_623_final_project/training/training_runs"
 features_path: "/mnt/mntsdb/genai/10_623_final_project/low_quality_mol_features.pkl"
 n_epochs: 5
-batch_size: 64
-lr: 0.001
+batch_size: 32
+lr: 0.0005
 val_size: 0.19
 test_size: 0.01
 n_devs: 1
@@ -11,6 +11,6 @@ wandb_project: "GenAIProject"
 
 model_config:
   n_transformer_blocks: 8
-  n_heads: 16
-  d_model: 512
+  n_heads: 8
+  d_model: 1024
   timesteps: 1000

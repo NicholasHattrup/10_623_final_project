@@ -221,8 +221,8 @@ class Diffusion(nn.Module):
 
         batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
         inv_mask2D = ~batch_mask2D
-        noise.masked_fill_(batch_mask2D, 0.0)
-        pred_noise_square.masked_fill_(batch_mask2D, 0.0)
+        noise.masked_fill_(inv_mask2D, 0.0)
+        pred_noise_square.masked_fill_(inv_mask2D, 0.0)
 
         loss = F.l1_loss(pred_noise_square, noise)
 

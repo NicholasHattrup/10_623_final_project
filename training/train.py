@@ -349,6 +349,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
 
+    # for name, p in diffusion_model.named_parameters():
+    #     print(name, p.shape)
+
     for epoch in range(cfg.n_epochs):
         train_one_epoch(train_dl, model, optimizer, fabric, cfg, epoch)
         avg_val_loss = evaluate(cfg, val_dl, model, fabric, "val")
