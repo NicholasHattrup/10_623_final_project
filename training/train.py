@@ -52,7 +52,7 @@ class ModelConfig:
         default = 0.1
     )
     timesteps : int = field(
-        default = 1000,
+        default = 250,
         metadata = {"description" : "Number of diffusion timesteps"}
     )
 
@@ -98,6 +98,9 @@ class TrainConfig:
     wandb_project : str = field(
         default = '',
         metadata = {'description' : "Name of wandb project, empty string will cause wandb to not be initialized."}
+    )
+    warmup_steps : int = field(
+        default = 2000
     )
     model_config : ModelConfig = field(
         default_factory = ModelConfig,
@@ -163,7 +166,7 @@ def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
             for ss in te_dataset:
                 f.write(f"{ss}\n")
 
-def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
+def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch):
     with tqdm(dataloader, unit = "batch", total = len(dataloader)) as bar:
         bar.set_description(f"Epoch [{epoch+1}/{cfg.n_epochs}]")
 
@@ -181,8 +184,11 @@ def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
 
             fabric.backward(training_loss)
             optimizer.step()
+            scheduler.step()
+
+            current_lr = scheduler.get_last_lr()[0]  
             
-            wandb.log({"training_loss" : training_loss})
+            wandb.log({"training_loss" : training_loss, "lr" : current_lr})
             bar.set_postfix(loss=training_loss.item())
 
 
@@ -293,6 +299,23 @@ def filter_hydrogen_atoms(feature_tuple):
         filtered_dist.append(filtered_row)
     return (filtered_features, filtered_adj, filtered_dist)
 
+# Implementation of LR scheduler suggested in
+# https://arxiv.org/pdf/2002.08264
+class TransformerLRScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, model_dim, warmup_steps, factor=1.0, last_epoch=-1):
+        self.model_dim = model_dim
+        self.warmup_steps = warmup_steps
+        self.factor = factor
+        self._step_num = 0
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        self._step_num += 1
+        scale = self.factor * (self.model_dim ** -0.5) * min(
+            self._step_num ** -0.5,
+            self._step_num * (self.warmup_steps ** -1.5)
+        )
+        return [base_lr * scale for base_lr in self.base_lrs]
 
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
@@ -313,8 +336,8 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
         low_quality_features_with_H = pickle.load(f)
     print("LOADED LOw-QUALITY MOLECULES")
 
-    low_quality_features_noH = {ss : filter_hydrogen_atoms(low_quality_features_with_H[ss]) for ss in tqdm(smiles_strs, desc = "Filtering Hs")}
-    low_quality_features = low_quality_features_noH
+    # low_quality_features_noH = {ss : filter_hydrogen_atoms(low_quality_features_with_H[ss]) for ss in tqdm(smiles_strs, desc = "Filtering Hs")}
+    low_quality_features = low_quality_features_with_H
 
 
     #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
@@ -371,15 +394,18 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     diffusion_model.to(fabric.device)
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = cfg.lr)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0)
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
-
-    # for name, p in diffusion_model.named_parameters():
-    #     print(name, p.shape)
+    scheduler = TransformerLRScheduler(
+        optimizer,
+        model_dim=cfg.model_config.d_model, 
+        warmup_steps=cfg.warmup_steps,
+        factor=100*cfg.lr
+    )
 
     for epoch in range(cfg.n_epochs):
-        train_one_epoch(train_dl, model, optimizer, fabric, cfg, epoch)
+        train_one_epoch(train_dl, model, optimizer, fabric, scheduler, cfg, epoch)
         avg_val_loss = evaluate(cfg, val_dl, model, fabric, "val")
         avg_train_loss = evaluate(cfg, train_dl, model, fabric, "train")
 

@@ -224,6 +224,7 @@ class Diffusion(nn.Module):
         noise.masked_fill_(inv_mask2D, 0.0)
         pred_noise_square.masked_fill_(inv_mask2D, 0.0)
 
+        #* weight by size? bigger mols probably more effect right now
         loss = F.l1_loss(pred_noise_square, noise)
 
         return loss
