@@ -174,7 +174,7 @@ class Diffusion(nn.Module):
         # Hint: use self.noise_like function to generate noise. DO NOT USE torch.randn
         model_device = self.model.init_conv.weight.device
         # 3 is the dimension (e.g., x y z)
-        noise = self.noise_like((batch_size, 3, self.max_atoms), model_device)
+        noise = self.noise_like((batch_size, self.max_atoms, self.max_atoms), model_device)
         return self.p_sample_loop(noise)
 
     # forward diffusion
@@ -197,10 +197,10 @@ class Diffusion(nn.Module):
         """
         Computes the loss for the forward diffusion.
         Args:
-            x_0: (B x N x 3) Batch of initial deltas between low-quality and high-quality.
+            x_0: (B x N x N) Batch of initial deltas between low-quality and high-quality.
             other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
             t: (B,) 1D tensor containing a batch of time indices to compute the loss at.
-            noise: (B x N x 3) The noise tensor to use.
+            noise: (B x N x N) The noise tensor to use.
         Returns:
             The computed loss.
         """
@@ -211,10 +211,6 @@ class Diffusion(nn.Module):
         # Nodes and Connectivity Are Unaffected By Noise
         # Only Distance Matrix Changes with Noise
         distance_matrix += x_t
-        # print(f"DISTANCE_MATRIX SHAPE {distance_matrix.shape}")
-        # print(f"{node_features.shape}")
-        # print(f"{adjacency_matrix.shape}")
-        # print(f"{t.shape}")
 
         predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
 
@@ -223,13 +219,8 @@ class Diffusion(nn.Module):
         M = noise.shape[-1]
         pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
 
-        # print(f"NOISE SHAPE {noise.shape}")
-        # print(f"PRED NOISE SHAPE {pred_noise_square.shape}")
-
-        # print(batch_mask.shape)
-        # print(batch_mask[0,:])
-        # print(noise.shape)
         batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
+        inv_mask2D = ~batch_mask2D
         noise.masked_fill_(batch_mask2D, 0.0)
         pred_noise_square.masked_fill_(batch_mask2D, 0.0)
 
