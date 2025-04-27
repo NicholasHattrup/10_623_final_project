@@ -272,6 +272,26 @@ def load_quantum_dataset(dft_mol_path : os.PathLike, quantum_datapath : os.PathL
         return dft_molecules_rdkit
 
 
+def filter_hydrogen_atoms(feature_tuple):
+    """Filter out atoms that have a 1 in the 11th position (index 10)."""
+    node_features, adj_matrix, dist_matrix = feature_tuple
+    # Find indices where the 11th element (index 10) is NOT 1
+    indices_to_keep = [i for i, row in enumerate(node_features) if row[10] != 1] #* HYDROGEN EMBEDDED AS 11th index
+    # Filter features
+    filtered_features = [node_features[i] for i in indices_to_keep]
+    # Filter adjacency matrix
+    filtered_adj = []
+    for i in indices_to_keep:
+        filtered_row = [adj_matrix[i][j] for j in indices_to_keep]
+        filtered_adj.append(filtered_row)
+    # Filter distance matrix
+    filtered_dist = []
+    for i in indices_to_keep:
+        filtered_row = [dist_matrix[i][j] for j in indices_to_keep]
+        filtered_dist.append(filtered_row)
+    return (filtered_features, filtered_adj, filtered_dist)
+
+
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
     datapath = os.path.dirname(cfg.features_path)
@@ -288,9 +308,13 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     print("LOADING LOW-QUALITY MOLECULES")
     with open(cfg.features_path, "rb") as f:
-        low_quality_features = pickle.load(f)
+        low_quality_features_with_H = pickle.load(f)
     print("LOADED LOw-QUALITY MOLECULES")
- 
+
+    low_quality_features_noH = {ss : filter_hydrogen_atoms(low_quality_features_with_H[ss]) for ss in tqdm(smiles_strs, desc = "Filtering Hs")}
+    low_quality_features = low_quality_features_noH
+
+
     #! NO GURANTEE ATOMS IN SAME ORDER ACROSS DATASETS I DONT THINK
     #! SMILES DO WHATEVER THE HELL THEY WANT
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
