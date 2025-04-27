@@ -220,13 +220,20 @@ class Diffusion(nn.Module):
 
         B = predicted_noise.shape[0]
         N = int(predicted_noise.shape[1]**0.5)
-        pred_noise_square = predicted_noise.view(B, N, N)
+        M = noise.shape[-1]
+        pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
 
         # print(f"NOISE SHAPE {noise.shape}")
         # print(f"PRED NOISE SHAPE {pred_noise_square.shape}")
 
-        M = noise.shape[-1]
-        loss = F.l1_loss(pred_noise_square[:, :M, :M], noise)
+        # print(batch_mask.shape)
+        # print(batch_mask[0,:])
+        # print(noise.shape)
+        batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
+        noise.masked_fill_(batch_mask2D, 0.0)
+        pred_noise_square.masked_fill_(batch_mask2D, 0.0)
+
+        loss = F.l1_loss(pred_noise_square, noise)
 
         return loss
         # ####################################################

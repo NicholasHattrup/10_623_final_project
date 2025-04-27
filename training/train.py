@@ -181,6 +181,7 @@ def train_one_epoch(dataloader, model, optimizer, fabric, cfg, epoch):
             fabric.backward(training_loss)
 
             wandb.log({"training_loss" : training_loss})
+            bar.set_postfix(loss=training_loss.item())
 
 
 def evaluate(cfg, dataloader, model, fabric, dataset : str):
