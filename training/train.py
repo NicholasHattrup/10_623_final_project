@@ -179,6 +179,7 @@ def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch)
             *other_features, delta = batch
             # Sample noise
             noise = torch.randn(delta.shape, device = fabric.device)
+            # noise = torch.zeros(delta.shape, device = fabric.device) # just testing
             # Evaluate Loss
             training_loss = model(delta, other_features, noise)
 
@@ -317,6 +318,12 @@ class TransformerLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         )
         return [base_lr * scale for base_lr in self.base_lrs]
 
+def count_parameters(model, only_trainable=True):
+    if only_trainable:
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    else:
+        return sum(p.numel() for p in model.parameters())
+
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
     datapath = os.path.dirname(cfg.features_path)
@@ -345,16 +352,16 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
     deltas = {ss : low_quality_features[ss][-1] - dft_dist_matricies[ss] for ss in bar}
 
-    total_sum   = sum(v.sum()   for v in deltas.values())
-    total_count = sum(v.size    for v in deltas.values())
-    total_sq_sum   = sum((v**2).sum()    for v in deltas.values())
-    delta_mean = total_sum / total_count
-    delta_std = np.sqrt((total_sq_sum / total_count) - delta_mean**2)
+    # total_sum   = sum(v.sum()   for v in deltas.values())
+    # total_count = sum(v.size    for v in deltas.values())
+    # total_sq_sum   = sum((v**2).sum()    for v in deltas.values())
+    # delta_mean = total_sum / total_count
+    # delta_std = np.sqrt((total_sq_sum / total_count) - delta_mean**2)
 
-    print(f"Mean : {delta_mean}")
-    print(f"Std : {delta_std}")
+    # print(f"Mean : {delta_mean}")
+    # print(f"Std : {delta_std}")
 
-    deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
+    # deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
 
     # Take intersection of the low quality and quantum molecules
     # smiles_strs = deltas.keys()
@@ -374,9 +381,9 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     X_train = [low_quality_features[ss]  for ss in train_smiles]
     X_val = [low_quality_features[ss] for ss in val_smiles]
     X_test = [low_quality_features[ss] for ss in test_smiles]
-    Y_train = [deltas_standardized[ss] for ss in train_smiles]
-    Y_val = [deltas_standardized[ss] for ss in val_smiles]
-    Y_test = [deltas_standardized[ss] for ss in test_smiles]
+    Y_train = [deltas[ss] for ss in train_smiles]
+    Y_val = [deltas[ss] for ss in val_smiles]
+    Y_test = [deltas[ss] for ss in test_smiles]
 
     train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
     val_dl = construct_loader(X_val, Y_val, 1, shuffle = False)
@@ -393,15 +400,17 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
                         )
     diffusion_model.to(fabric.device)
 
+    print(f"Model has {count_parameters(diffusion_model) / 1e6 :.4f}M trainable parameters")
+
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0, weight_decay = 1e-3)
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
     scheduler = TransformerLRScheduler(
         optimizer,
         model_dim=cfg.model_config.d_model, 
         warmup_steps=cfg.warmup_steps,
-        factor=100*cfg.lr
+        factor=150*cfg.lr
     )
 
     for epoch in range(cfg.n_epochs):

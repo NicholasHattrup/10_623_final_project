@@ -212,6 +212,9 @@ class Diffusion(nn.Module):
         # Only Distance Matrix Changes with Noise
         distance_matrix += x_t
 
+        # Negative distance means nothing
+        distance_matrix = torch.clamp(distance_matrix, min=1e-6)
+
         predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
 
         B = predicted_noise.shape[0]
@@ -225,7 +228,8 @@ class Diffusion(nn.Module):
         pred_noise_square.masked_fill_(inv_mask2D, 0.0)
 
         #* weight by size? bigger mols probably more effect right now
-        loss = F.l1_loss(pred_noise_square, noise)
+        # loss = F.l1_loss(pred_noise_square, noise)
+        loss = F.mse_loss(pred_noise_square, noise)
 
         return loss
         # ####################################################

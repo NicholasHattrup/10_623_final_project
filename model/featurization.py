@@ -155,18 +155,18 @@ def featurize_mol(mol, add_dummy_node, one_hot_formal_charge, positions=None):
     pos_tensor = torch.from_numpy(pos_matrix)
     dist_matrix = torch.cdist(pos_tensor, pos_tensor)
 
-    m = np.zeros((node_features.shape[0] + 1, node_features.shape[1] + 1))
-    m[1:, 1:] = node_features
-    m[0, 0] = 1.
-    node_features = m
+    # m = np.zeros((node_features.shape[0] + 1, node_features.shape[1] + 1))
+    # m[1:, 1:] = node_features
+    # m[0, 0] = 1.
+    # node_features = m
 
-    m = np.zeros((adj_matrix.shape[0] + 1, adj_matrix.shape[1] + 1))
-    m[1:, 1:] = adj_matrix
-    adj_matrix = m
+    # m = np.zeros((adj_matrix.shape[0] + 1, adj_matrix.shape[1] + 1))
+    # m[1:, 1:] = adj_matrix
+    # adj_matrix = m
 
-    m = np.full((dist_matrix.shape[0] + 1, dist_matrix.shape[1] + 1), 1e6)
-    m[1:, 1:] = dist_matrix
-    dist_matrix = m
+    # m = np.full((dist_matrix.shape[0] + 1, dist_matrix.shape[1] + 1), 1e6)
+    # m[1:, 1:] = dist_matrix
+    # dist_matrix = m
 
     return node_features, adj_matrix, dist_matrix, pos_matrix, symbols
 
@@ -292,10 +292,16 @@ def mol_collate_func(batch):
         labels.append(pad_array(molecule.y, (max_size, max_size)))
         adjacency_list.append(pad_array(molecule.adjacency_matrix, (max_size, max_size)))
         distance_list.append(pad_array(molecule.distance_matrix, (max_size, max_size)))
-        # features_list.append(pad_array(molecule.node_features, (max_size, d_atom)))
         features_list.append(pad_array(molecule.node_features, (max_size, molecule.node_features.shape[1])))
 
-    return [FloatTensor(features) for features in (adjacency_list, features_list, distance_list, labels)]
+    adjacency_tensor = torch.from_numpy(np.array(adjacency_list)).float()
+    features_tensor = torch.from_numpy(np.array(features_list)).float()
+    distance_tensor = torch.from_numpy(np.array(distance_list)).float()
+    labels_tensor = torch.from_numpy(np.array(labels)).float()
+
+    return [adjacency_tensor, features_tensor, distance_tensor, labels_tensor]    
+
+    # return [FloatTensor(features) for features in (adjacency_list, features_list, distance_list, labels)]
 
 
 def construct_dataset(x_all, y_all):
