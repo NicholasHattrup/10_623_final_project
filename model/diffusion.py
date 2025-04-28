@@ -125,11 +125,11 @@ class Diffusion(nn.Module):
         adjacency_matrix, node_features, distance_matrix, _ = other_features
         # print(distance_matrix.shape)
         # print(x.shape)
-        distance_matrix += x
+        distance_matrix_new = distance_matrix + x
         # distance_matrix = torch.clamp(distance_matrix, min=1e-6)
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
         
-        ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
+        ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix_new, None, t)
 
         B = ep_t.shape[0]
         N = int(ep_t.shape[1]**0.5)
@@ -147,7 +147,7 @@ class Diffusion(nn.Module):
         
         #* DO WE NEED SOMETHING LIKE THIS?
         # x_hat_0 = torch.clamp(x_hat_0, min = -1.0, max = 1.0)
-        # x_hat_0 = torch.clamp(distance_matrix, min=1e-6)
+        # x_hat_0 = torch.clamp(distance_matrix_new, min=1e-6)
         mu_tilda_t = extract(self.mu_c0, t, x.shape)*x + extract(self.mu_c1, t, x.shape)*x_hat_0
 
         if t_index == 0:
@@ -227,12 +227,12 @@ class Diffusion(nn.Module):
 
         # Nodes and Connectivity Are Unaffected By Noise
         # Only Distance Matrix Changes with Noise
-        distance_matrix += x_t
+        distance_matrix_new = distance_matrix + x_t
 
         # Negative distance means nothing
-        # distance_matrix_ = torch.clamp(distance_matrix_, min=1e-6)
+        # distance_matrix_new = torch.clamp(distance_matrix_new, min=1e-6)
 
-        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
+        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix_new, None, t)
 
         B = predicted_noise.shape[0]
         N = int(predicted_noise.shape[1]**0.5)

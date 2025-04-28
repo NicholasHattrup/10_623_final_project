@@ -10,7 +10,7 @@ n_devs: 1
 wandb_project: "GenAIProject"
 
 model_config:
-  n_transformer_blocks: 16
+  n_transformer_blocks: 8
   n_heads: 8
   d_model: 1024
-  timesteps: 25
+  timesteps: 200

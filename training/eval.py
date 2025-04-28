@@ -9,8 +9,8 @@ from training.train import TrainConfig, load_model, load_quantum_dataset
 from model import mol_collate_func, construct_dataset
 
 # mean and std used to standardize training data
-MU = -0.009428045980937855
-STD = 0.5174648091010577
+MU = 2.9927773761658343
+STD = 1.4751436743738326
 
 def reconstruct_coords(distances, k: int = 3):
 
@@ -45,7 +45,7 @@ def reconstruct_coords(distances, k: int = 3):
 
 
 def get_samples():
-    model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-27"
+    model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-28_test"
     quantum_datapath = "/mnt/mntsdb/genai/10_623_final_project/dataset/quantum_features.npz"
     tags_path = os.path.join(model_dir, "testing_set.txt")
     config_path = os.path.join(model_dir, "config.yml")
@@ -76,17 +76,17 @@ def get_samples():
     diffusion_model.load_state_dict(checkpoint['model_state_dict'])  
     diffusion_model.eval().to("cuda")
 
-    # low_quality_dist_matricies = np.load(cfg.low_qual_datapath, allow_pickle = True) 
+    low_quality_dist_matricies = np.load(cfg.low_qual_datapath, allow_pickle = True) 
 
 
     # Sample diffusion process for molecules in test set
     samples = {}
-    for ss in tqdm(test_tags[:1]):
-        feats, adj, dist = mol_features[ss]
+    for ss in tqdm(test_tags[:2]):
+        feats, adj, _ = mol_features[ss]
 
         # Sample and remove padding
         #* FIX DIST MATRIX PASSED HERE TO BE LOW QUALITY??
-        batch = construct_dataset([(feats, adj, (dist - MU) / STD)], [np.empty((0,0))])
+        batch = construct_dataset([(feats, adj, (low_quality_dist_matricies[ss] - MU) / STD)], [np.empty((0,0))])
         batch_collated = mol_collate_func(batch)
         batch_collated = [b.to("cuda") for b in batch_collated]
         samples[ss] = diffusion_model.sample(batch_collated).cpu().numpy()
@@ -99,7 +99,7 @@ def rmsd(x,y):
 
 def calc_rmsd():
 
-    model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-27"
+    model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-28_test"
     config_path = os.path.join(model_dir, "config.yml")
     
     with open(config_path) as f:
@@ -113,7 +113,7 @@ def calc_rmsd():
 
     quantum_dist_matricies = {ss : mol_features[ss][-1] for ss in tqdm(mol_features)}
 
-    rmses = np.array([rmsd((model_samples[ss][0]*STD) + MU, quantum_dist_matricies[ss]) for ss in tqdm(model_samples)])
+    rmses = np.array([rmsd((model_samples[ss][0]*STD), quantum_dist_matricies[ss]) for ss in tqdm(model_samples)])
 
     # print(np.mean(rmses))
     # print(next(iter(model_samples.values())))
@@ -128,4 +128,4 @@ def calc_rmsd():
 if __name__ == "__main__":
     get_samples()
 
-    # calc_rmsd()
+    calc_rmsd()

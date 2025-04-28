@@ -128,31 +128,6 @@ def pos_sym_to_rdkit(symbols, positions):
     Chem.SanitizeMol(mol)
     return mol
 
-# Takes two rdkit molecules and calculates difference in their positions
-def get_mol_delta(positions, symbols, rdkit_mol):
-    rdMolAlign.AlignMol(mol1, mol2)
-
-    conf1 = mol1.GetConformer()
-    conf2 = mol2.GetConformer()
-
-    # Check same number of atoms
-    if conf1.GetNumAtoms() != conf2.GetNumAtoms():
-        raise ValueError("Molecules must have the same number of atoms.")
-
-    # Compute delta
-    positions1 = np.array([list(conf1.GetAtomPosition(i)) for i in range(conf1.GetNumAtoms())])
-    positions2 = np.array([list(conf2.GetAtomPosition(i)) for i in range(conf2.GetNumAtoms())])
-
-    delta = positions1 - positions2
-
-    return delta
-
-
-def get_mol_delta_vnick(src_xyz, tgt_xyz):
-        src_xyz, rmsd_align = kabsch_weighted_fit(src_xyz, tgt_xyz, return_rmsd=True)
-        return src_xyz - tgt_xyz, rmsd_align
-
-
 
 def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
     with open(os.path.join(out_dir, "training_set.txt"), "w") as f:
@@ -188,9 +163,9 @@ def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch)
             # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
-            scheduler.step()
+            # scheduler.step()
 
-            current_lr = scheduler.get_last_lr()[0]  
+            current_lr = 0.0 #scheduler.get_last_lr()[0]  
             
             wandb.log({"training_loss" : training_loss, "lr" : current_lr})
             bar.set_postfix(loss=training_loss.item())
@@ -318,19 +293,17 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     smiles_strs = set(dft_mol_features).intersection(low_quality_dist_matricies)
     print(f"Total Smiles in Intersection {len(smiles_strs)}")
 
+    total_sum   = sum(np.sum(v) for v in tqdm(low_quality_dist_matricies.values()))
+    total_count = sum(v.size for v in low_quality_dist_matricies.values())
+    total_sq_sum   = sum(np.sum(np.square(v)) for v in low_quality_dist_matricies.values())
+    dist_mean = total_sum / total_count
+    dist_std = np.sqrt((total_sq_sum / total_count) - dist_mean**2) # sqrt(E[X^2] - E[X]^2)
+
+    print(f"Mean : {dist_mean}")
+    print(f"Std : {dist_std}")
+
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
-    deltas = {ss : low_quality_dist_matricies[ss] - dft_mol_features[ss][-1] for ss in bar}
-
-    total_sum   = sum(v.sum()   for v in deltas.values())
-    total_count = sum(v.size    for v in deltas.values())
-    total_sq_sum   = sum((v**2).sum()    for v in deltas.values())
-    delta_mean = total_sum / total_count
-    delta_std = np.sqrt((total_sq_sum / total_count) - delta_mean**2)
-
-    print(f"Mean : {delta_mean}")
-    print(f"Std : {delta_std}")
-
-    deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
+    deltas = {ss : (dft_mol_features[ss][-1] - low_quality_dist_matricies[ss]) / dist_std for ss in bar}
 
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(list(smiles_strs), cfg.test_size, cfg.val_size, seed = 42)
@@ -340,15 +313,15 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"There are testing clusters: {len(test_smiles)}")
 
     bar = tqdm(smiles_strs, desc = "Making Features for Model")
-    low_quality_features = {ss : (dft_mol_features[ss][0], dft_mol_features[ss][1], low_quality_dist_matricies[ss]) for ss in bar}
+    low_quality_features = {ss : (dft_mol_features[ss][0], dft_mol_features[ss][1], (low_quality_dist_matricies[ss] - dist_mean) / dist_std) for ss in bar}
 
     # Setup data in format MAT expects
-    X_train = [low_quality_features[ss]  for ss in train_smiles] #mol features are same for dft and low quality
+    X_train = [low_quality_features[ss]  for ss in train_smiles]
     X_val = [low_quality_features[ss] for ss in val_smiles]
     X_test = [low_quality_features[ss] for ss in test_smiles]
-    Y_train = [deltas_standardized[ss] for ss in train_smiles]
-    Y_val = [deltas_standardized[ss] for ss in val_smiles]
-    Y_test = [deltas_standardized[ss] for ss in test_smiles]
+    Y_train = [deltas[ss] for ss in train_smiles]
+    Y_val = [deltas[ss] for ss in val_smiles]
+    Y_test = [deltas[ss] for ss in test_smiles]
 
     train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
     val_dl = construct_loader(X_val, Y_val, 32, shuffle = False)
@@ -367,16 +340,17 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     print(f"Model has {count_parameters(diffusion_model) / 1e6 :.4f}M trainable parameters")
 
-    # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0, weight_decay = 1e-5)
+    # optimizer = torch.optim.SGD(diffusion_model.parameters(), lr = cfg.lr)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = cfg.lr, weight_decay = 1e-5)
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
-    scheduler = TransformerLRScheduler(
-        optimizer,
-        model_dim=cfg.model_config.d_model, 
-        warmup_steps=cfg.warmup_steps,
-        factor=250*cfg.lr
-    )
+    # scheduler = TransformerLRScheduler(
+    #     optimizer,
+    #     model_dim=cfg.model_config.d_model, 
+    #     warmup_steps=cfg.warmup_steps,
+    #     factor=250*cfg.lr
+    # )
+    scheduler = None
 
     for epoch in range(cfg.n_epochs):
         train_one_epoch(train_dl, model, optimizer, fabric, scheduler, cfg, epoch)
@@ -497,3 +471,29 @@ if __name__ == "__main__":
 #         filtered_row = [dist_matrix[i][j] for j in indices_to_keep]
 #         filtered_dist.append(filtered_row)
 #     return (filtered_features, filtered_adj, filtered_dist)
+
+
+# # Takes two rdkit molecules and calculates difference in their positions
+# def get_mol_delta(positions, symbols, rdkit_mol):
+#     rdMolAlign.AlignMol(mol1, mol2)
+
+#     conf1 = mol1.GetConformer()
+#     conf2 = mol2.GetConformer()
+
+#     # Check same number of atoms
+#     if conf1.GetNumAtoms() != conf2.GetNumAtoms():
+#         raise ValueError("Molecules must have the same number of atoms.")
+
+#     # Compute delta
+#     positions1 = np.array([list(conf1.GetAtomPosition(i)) for i in range(conf1.GetNumAtoms())])
+#     positions2 = np.array([list(conf2.GetAtomPosition(i)) for i in range(conf2.GetNumAtoms())])
+
+#     delta = positions1 - positions2
+
+#     return delta
+
+
+# def get_mol_delta_vnick(src_xyz, tgt_xyz):
+#         src_xyz, rmsd_align = kabsch_weighted_fit(src_xyz, tgt_xyz, return_rmsd=True)
+#         return src_xyz - tgt_xyz, rmsd_align
+
