@@ -121,12 +121,8 @@ class Diffusion(nn.Module):
         Returns:
             The sampled delta at timestep t_index.
         """
-        # print(other_features)
         adjacency_matrix, node_features, distance_matrix, _ = other_features
-        # print(distance_matrix.shape)
-        # print(x.shape)
-        distance_matrix += x
-        # distance_matrix = torch.clamp(distance_matrix, min=1e-6)
+        distance_matrix = distance_matrix + x
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
         
         ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
@@ -140,14 +136,13 @@ class Diffusion(nn.Module):
         tmp_sq = tmp.view(B, N, N)[:, :M, :M]
 
         x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) * (x - tmp_sq)
-
-        print(torch.min(tmp_sq).cpu())
-        print(torch.max(x).cpu())
-        print("---")
         
-        #* DO WE NEED SOMETHING LIKE THIS?
-        # x_hat_0 = torch.clamp(x_hat_0, min = -1.0, max = 1.0)
-        # x_hat_0 = torch.clamp(distance_matrix, min=1e-6)
+        # Remove print statements that can slow down training
+        # and potentially cause numerical instability when viewing values
+        
+        # Clamp values to prevent divergence
+        x_hat_0 = torch.clamp(x_hat_0, min=-10.0, max=10.0)
+        
         mu_tilda_t = extract(self.mu_c0, t, x.shape)*x + extract(self.mu_c1, t, x.shape)*x_hat_0
 
         if t_index == 0:
@@ -222,28 +217,42 @@ class Diffusion(nn.Module):
             The computed loss.
         """
         x_t = self.q_sample(x_0, t, noise)
-        adjacency_matrix, node_features, distance_matrix = other_features
+        adjacency_matrix, node_features, distance_matrix, _ = other_features  # Fixed unpacking to include the 4th element
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
 
         # Nodes and Connectivity Are Unaffected By Noise
         # Only Distance Matrix Changes with Noise
         distance_matrix_new = distance_matrix + x_t
 
-        # Negative distance means nothing
-        # distance_matrix_ = torch.clamp(distance_matrix_, min=1e-6)
+        # Apply minimum clamping to ensure distances are physically meaningful
+        distance_matrix_new = torch.clamp(distance_matrix_new, min=1e-6)
 
-        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix_new , None, t)
+        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix_new, None, t)
 
         B = predicted_noise.shape[0]
         N = int(predicted_noise.shape[1]**0.5)
         M = noise.shape[-1]
         pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
 
-        batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
+        batch_mask2D = batch_mask.unsqueeze(-1) * batch_mask.unsqueeze(-2)  # Changed | to * for proper masking
 
-        #* weight by size? bigger mols probably more effect right now
-        # loss = F.l1_loss(pred_noise_square[batch_mask2D].flatten(), noise[batch_mask2D].flatten())
-        loss = F.mse_loss(pred_noise_square[batch_mask2D].flatten(), noise[batch_mask2D].flatten())
+        # Use a combination of MSE and L1 loss for better stability
+        mse_loss = F.mse_loss(pred_noise_square[batch_mask2D], noise[batch_mask2D])
+        l1_loss = F.l1_loss(pred_noise_square[batch_mask2D], noise[batch_mask2D])
+        loss = 0.9 * mse_loss + 0.1 * l1_loss  # Weighted combination
+        
+        # Remove debug prints in training loop
+        # Log values to wandb instead for monitoring without affecting performance
+        with torch.no_grad():
+            wandb.log({
+                "delta_mean": torch.mean(x_0).item(),
+                "delta_std": torch.std(x_0).item(),
+                "delta_min": torch.min(x_0).item(),
+                "delta_max": torch.max(x_0).item(),
+                "mask_valid_count": batch_mask2D.sum().item(),
+                "mse_loss": mse_loss.item(),
+                "l1_loss": l1_loss.item()
+            })
 
         return loss
         # ####################################################
