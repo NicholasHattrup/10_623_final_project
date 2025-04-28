@@ -126,6 +126,7 @@ class Generator(nn.Module):
         self.pairwise_mlp = []
         # Input dimension is 2 * d_model for concatenated pairs
         input_dim = 2 * d_model 
+        self.current_dim = input_dim
         current_dim = input_dim
         for i in range(n_layers - 1):
             hidden_dim = d_model # Or choose another hidden dimension size
@@ -196,7 +197,7 @@ class Generator(nn.Module):
         # Let's redefine the MLP slightly
         
         # --- Redefining MLP ---
-        self.pairwise_mlp_head = nn.Linear(current_dim, 1) # Output 1 value per pair
+        self.pairwise_mlp_head = nn.Linear(self.current_dim, 1) # Output 1 value per pair
         # --- End Redefining ---
         
         # --- Recalculating Output ---
