@@ -395,7 +395,7 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
         optimizer,
         model_dim=cfg.model_config.d_model, 
         warmup_steps=cfg.warmup_steps,
-        factor=1.0  # Remove the excessive scaling factor
+        factor=10.0  # Increased factor for potentially higher LR scaling
     )
     
     # Add gradient clipping
