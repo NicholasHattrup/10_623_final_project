@@ -110,7 +110,7 @@ class Diffusion(nn.Module):
 
     # backward diffusion
     @torch.no_grad()
-    def p_sample(self, x, t, t_index):
+    def p_sample(self, x, t, t_index, other_features):
         """
         Computes the (t_index)th sample from the (t_index + 1)th sample using
         the reverse diffusion process.
@@ -122,7 +122,12 @@ class Diffusion(nn.Module):
             The sampled delta at timestep t_index.
         """
 
-        ep_t = self.model(x, t)
+        adjacency_matrix, node_features, distance_matrix = other_features
+        distance_matrix += x
+        distance_matrix = torch.clamp(distance_matrix, min=1e-6)
+        batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
+        
+        ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
 
         x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) *\
                     (x - extract(self.op_sqrt_a_bar, t, ep_t.shape)*ep_t)
@@ -139,7 +144,7 @@ class Diffusion(nn.Module):
         # ####################################################
 
     @torch.no_grad()
-    def p_sample_loop(self, delta):
+    def p_sample_loop(self, delta, other_features):
         """
         Passes noise through the entire reverse diffusion process to generate
         final image samples.
@@ -152,7 +157,7 @@ class Diffusion(nn.Module):
 
         for t in reversed(range(self.num_timesteps)):
             t_full = torch.full((b,), t, device = delta.device, dtype = torch.long)
-            delta = self.p_sample(delta, t_full, t)
+            delta = self.p_sample(delta, t_full, t, other_features)
 
         #* DO WE NEED TO DO SOMETHING LIKE THIS??
         # delta = torch.clip(delta, -1.0, 1.0)
@@ -162,7 +167,7 @@ class Diffusion(nn.Module):
         # ####################################################
 
     @torch.no_grad()
-    def sample(self, batch_size):
+    def sample(self, batch_size, other_features):
         """
         Wrapper function for p_sample_loop.
         Args:
@@ -171,11 +176,8 @@ class Diffusion(nn.Module):
             The sampled images.
         """
         self.model.eval()
-        # Hint: use self.noise_like function to generate noise. DO NOT USE torch.randn
-        model_device = self.model.init_conv.weight.device
-        # 3 is the dimension (e.g., x y z)
-        noise = self.noise_like((batch_size, self.max_atoms, self.max_atoms), model_device)
-        return self.p_sample_loop(noise)
+        noise = self.noise_like((batch_size, self.max_atoms, self.max_atoms), self.device)
+        return self.p_sample_loop(noise, other_features)
 
     # forward diffusion
     def q_sample(self, x_0, t, noise):
@@ -223,6 +225,7 @@ class Diffusion(nn.Module):
         pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
 
         batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
+        # inv_mask2D = batch_mask2D
         inv_mask2D = ~batch_mask2D
         noise.masked_fill_(inv_mask2D, 0.0)
         pred_noise_square.masked_fill_(inv_mask2D, 0.0)

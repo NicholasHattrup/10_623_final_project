@@ -38,7 +38,7 @@ class ModelConfig:
         metadata={"description" : "Number of heads in multi-headed attention"}
     )
     d_atom : int = field(
-        default = 27, 
+        default = 22, 
         metadata = {"description" : "Atom embed dim, 27 unless you add more atom types"}
     )
     max_atoms : int = field(
@@ -65,7 +65,7 @@ class TrainConfig:
     outpath : str = field(
         metadata = {'description' : "Folder where output directory will be created to save results."}
     )
-    features_path : str = field(
+    low_qual_datapath : str = field(
         default = None,
         metadata = {'description' : "Path to pre-computed features for dataset"}
     )
@@ -178,7 +178,7 @@ def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch)
             # Unpack batch
             *other_features, delta = batch
             # Sample noise
-            noise = torch.randn(delta.shape, device = fabric.device)
+            noise = torch.randn(delta.shape, device = fabric.device) #/ 10
             # noise = torch.zeros(delta.shape, device = fabric.device) # just testing
             # Evaluate Loss
             training_loss = model(delta, other_features, noise)
@@ -302,34 +302,32 @@ def count_parameters(model, only_trainable=True):
 
 def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_workers = 40):
 
-    datapath = os.path.dirname(cfg.features_path)
-
     print("LOADING QUANTUM MOLECULES")
     dft_mol_features, dft_pos_sym = load_quantum_dataset(cfg.quantum_datapath) # smiles : (node_features, adj, dist, pos, symbols)
     smiles_strs = dft_mol_features.keys()
     print("LOADED QUANTUM MOLECULES")
 
     print("LOADING LOW-QUALITY MOLECULES")
-    with open(cfg.features_path, "rb") as f:
-        low_quality_features = pickle.load(f) 
-    print("LOADED LOw-QUALITY MOLECULES")
+    low_quality_dist_matricies = np.load(cfg.low_qual_datapath, allow_pickle = True) 
+    print("LOADED LOW-QUALITY MOLECULES")
+
+
+    smiles_strs = set(dft_mol_features).intersection(low_quality_dist_matricies)
+    print(f"Total Smiles in Intersection {len(smiles_strs)}")
 
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
-    deltas = {ss : low_quality_features[ss][-1] - dft_dist_matricies[ss] for ss in bar}
+    deltas = {ss : low_quality_dist_matricies[ss][-1] - dft_mol_features[ss][-1] for ss in bar}
 
-    # total_sum   = sum(v.sum()   for v in deltas.values())
-    # total_count = sum(v.size    for v in deltas.values())
-    # total_sq_sum   = sum((v**2).sum()    for v in deltas.values())
-    # delta_mean = total_sum / total_count
-    # delta_std = np.sqrt((total_sq_sum / total_count) - delta_mean**2)
+    total_sum   = sum(v.sum()   for v in deltas.values())
+    total_count = sum(v.size    for v in deltas.values())
+    total_sq_sum   = sum((v**2).sum()    for v in deltas.values())
+    delta_mean = total_sum / total_count
+    delta_std = np.sqrt((total_sq_sum / total_count) - delta_mean**2)
 
-    # print(f"Mean : {delta_mean}")
-    # print(f"Std : {delta_std}")
+    print(f"Mean : {delta_mean}")
+    print(f"Std : {delta_std}")
 
-    # deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
-
-    # Take intersection of the low quality and quantum molecules
-    # smiles_strs = deltas.keys()
+    deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
 
     #! some fake data while nick makes the correct data
     # smiles_strs = ["CO", "CC", "CCC", "CCCC"]
@@ -346,13 +344,13 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     X_train = [dft_mol_features[ss]  for ss in train_smiles] #mol features are same for dft and low quality
     X_val = [dft_mol_features[ss] for ss in val_smiles]
     X_test = [dft_mol_features[ss] for ss in test_smiles]
-    Y_train = [deltas[ss] for ss in train_smiles]
-    Y_val = [deltas[ss] for ss in val_smiles]
-    Y_test = [deltas[ss] for ss in test_smiles]
+    Y_train = [deltas_standardized[ss] for ss in train_smiles]
+    Y_val = [deltas_standardized[ss] for ss in val_smiles]
+    Y_test = [deltas_standardized[ss] for ss in test_smiles]
 
     train_dl = construct_loader(X_train, Y_train, cfg.batch_size)
-    val_dl = construct_loader(X_val, Y_val, 1, shuffle = False)
-    test_dl = construct_loader(X_test, Y_test, 1, shuffle = False)
+    val_dl = construct_loader(X_val, Y_val, 32, shuffle = False)
+    test_dl = construct_loader(X_test, Y_test, 32, shuffle = False)
     train_dl, val_dl, test_dl = fabric.setup_dataloaders(train_dl, val_dl, test_dl)
 
 
