@@ -166,11 +166,13 @@ def save_split(out_dir, tr_dataset, val_dataset, te_dataset = None):
             for ss in te_dataset:
                 f.write(f"{ss}\n")
 
-def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch):
-    with tqdm(dataloader, unit = "batch", total = len(dataloader)) as bar:
+def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch, max_norm=1.0):
+    with tqdm(dataloader, unit="batch", total=len(dataloader)) as bar:
         bar.set_description(f"Epoch [{epoch+1}/{cfg.n_epochs}]")
 
         model.train()
+        total_loss = 0.0
+        num_batches = 0
         
         for i, batch in enumerate(bar):
             
@@ -178,22 +180,32 @@ def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch)
             # Unpack batch
             *other_features, delta = batch
             # Sample noise
-            noise = torch.randn(delta.shape, device = fabric.device) #/ 10
-            # noise = torch.zeros(delta.shape, device = fabric.device) # just testing
+            noise = torch.randn(delta.shape, device=fabric.device)
+            
             # Evaluate Loss
             training_loss = model(delta, other_features, noise)
 
             fabric.backward(training_loss)
 
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Apply gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
 
             optimizer.step()
             scheduler.step()
 
             current_lr = scheduler.get_last_lr()[0]  
             
-            wandb.log({"training_loss" : training_loss, "lr" : current_lr})
-            bar.set_postfix(loss=training_loss.item())
+            total_loss += training_loss.item()
+            num_batches += 1
+            
+            wandb.log({
+                "training_loss": training_loss.item(), 
+                "lr": current_lr,
+                "batch_idx": i + epoch * len(dataloader)
+            })
+            
+            # Update tqdm bar with running average loss
+            bar.set_postfix(loss=training_loss.item(), avg_loss=total_loss/num_batches)
 
 
 def evaluate(cfg, dataloader, model, fabric, dataset : str):
@@ -330,6 +342,14 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"Mean : {delta_mean}")
     print(f"Std : {delta_std}")
 
+    # Save these values to file for use in evaluation
+    np.savez(os.path.join(out_dir, "normalization_stats.npz"), mean=delta_mean, std=delta_std)
+    
+    # Check if delta_std is very small, which could cause numerical issues
+    if delta_std < 1e-5:
+        print("WARNING: Very small standard deviation detected. Setting to 1.0 to avoid numerical issues.")
+        delta_std = 1.0
+
     deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
 
     # Test-Train-Val Split
@@ -368,22 +388,25 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"Model has {count_parameters(diffusion_model) / 1e6 :.4f}M trainable parameters")
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0, weight_decay = 1e-5)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr=cfg.lr, weight_decay=1e-5)
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
     scheduler = TransformerLRScheduler(
         optimizer,
         model_dim=cfg.model_config.d_model, 
         warmup_steps=cfg.warmup_steps,
-        factor=250*cfg.lr
+        factor=1.0  # Remove the excessive scaling factor
     )
+    
+    # Add gradient clipping
+    max_norm = 1.0
 
     for epoch in range(cfg.n_epochs):
-        train_one_epoch(train_dl, model, optimizer, fabric, scheduler, cfg, epoch)
+        train_one_epoch(train_dl, model, optimizer, fabric, scheduler, cfg, epoch, max_norm)
         avg_val_loss = evaluate(cfg, val_dl, model, fabric, "val")
         avg_train_loss = evaluate(cfg, train_dl, model, fabric, "train")
 
-        fabric.log_dict({"avg_val_loss" : avg_val_loss, "avg_train_loss" : avg_train_loss, "epoch" : epoch})
+        fabric.log_dict({"avg_val_loss": avg_val_loss, "avg_train_loss": avg_train_loss, "epoch": epoch})
 
         if epoch > 0 and epoch % (cfg.checkpoint_interval-1) == 0:
             state = {
