@@ -3,19 +3,14 @@ outpath: "/mnt/mntsdb/genai/10_623_final_project/training/training_runs"
 low_qual_datapath: "/mnt/mntsdb/genai/10_623_final_project/dataset/low_quality_dist_matricies_50K.npz"
 n_epochs: 5
 batch_size: 128
-lr: 0.0001
+lr: 0.001
 val_size: 0.19
 test_size: 0.01
 n_devs: 1
 wandb_project: "GenAIProject"
 
 model_config:
-  n_transformer_blocks: 8
+  n_transformer_blocks: 16
   n_heads: 8
   d_model: 1024
-  timesteps: 1000
-
-
-# 3M 
-# 52 m
-#
+  timesteps: 25

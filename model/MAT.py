@@ -181,6 +181,7 @@ class Encoder(nn.Module):
         x += time_embedding
         for layer in self.layers:
             x = layer(x, mask, adj_matrix, distances_matrix, edges_att)
+            # x += time_embedding
         return self.norm(x)
 
     

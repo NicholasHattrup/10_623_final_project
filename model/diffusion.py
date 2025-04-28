@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
-
+import numpy as np
 import wandb
 
 def extract(a, t, x_shape):
@@ -121,19 +121,33 @@ class Diffusion(nn.Module):
         Returns:
             The sampled delta at timestep t_index.
         """
-
-        adjacency_matrix, node_features, distance_matrix = other_features
+        # print(other_features)
+        adjacency_matrix, node_features, distance_matrix, _ = other_features
+        # print(distance_matrix.shape)
+        # print(x.shape)
         distance_matrix += x
-        distance_matrix = torch.clamp(distance_matrix, min=1e-6)
+        # distance_matrix = torch.clamp(distance_matrix, min=1e-6)
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
         
         ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
 
-        x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) *\
-                    (x - extract(self.op_sqrt_a_bar, t, ep_t.shape)*ep_t)
+        B = ep_t.shape[0]
+        N = int(ep_t.shape[1]**0.5)
+        M = x.shape[-1] # max of batch
+
+        tmp = extract(self.op_sqrt_a_bar, t, ep_t.shape)*ep_t
+
+        tmp_sq = tmp.view(B, N, N)[:, :M, :M]
+
+        x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) * (x - tmp_sq)
+
+        print(torch.min(tmp_sq).cpu())
+        print(torch.max(x).cpu())
+        print("---")
         
         #* DO WE NEED SOMETHING LIKE THIS?
         # x_hat_0 = torch.clamp(x_hat_0, min = -1.0, max = 1.0)
+        # x_hat_0 = torch.clamp(distance_matrix, min=1e-6)
         mu_tilda_t = extract(self.mu_c0, t, x.shape)*x + extract(self.mu_c1, t, x.shape)*x_hat_0
 
         if t_index == 0:
@@ -154,7 +168,7 @@ class Diffusion(nn.Module):
             The sampled images.
         """
         b = delta.shape[0]
-
+    
         for t in reversed(range(self.num_timesteps)):
             t_full = torch.full((b,), t, device = delta.device, dtype = torch.long)
             delta = self.p_sample(delta, t_full, t, other_features)
@@ -167,7 +181,7 @@ class Diffusion(nn.Module):
         # ####################################################
 
     @torch.no_grad()
-    def sample(self, batch_size, other_features):
+    def sample(self, other_features):
         """
         Wrapper function for p_sample_loop.
         Args:
@@ -176,8 +190,9 @@ class Diffusion(nn.Module):
             The sampled images.
         """
         self.model.eval()
-        noise = self.noise_like((batch_size, self.max_atoms, self.max_atoms), self.device)
-        return self.p_sample_loop(noise, other_features)
+        distance_matrix = other_features[2]
+        noise = self.noise_like(distance_matrix.shape, self.device)
+        return self.p_sample_loop(noise, other_features) + distance_matrix
 
     # forward diffusion
     def q_sample(self, x_0, t, noise):
@@ -215,7 +230,7 @@ class Diffusion(nn.Module):
         distance_matrix += x_t
 
         # Negative distance means nothing
-        distance_matrix = torch.clamp(distance_matrix, min=1e-6)
+        # distance_matrix_ = torch.clamp(distance_matrix_, min=1e-6)
 
         predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
 
@@ -225,14 +240,10 @@ class Diffusion(nn.Module):
         pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
 
         batch_mask2D =  batch_mask.unsqueeze(-1) | batch_mask.unsqueeze(-2)
-        # inv_mask2D = batch_mask2D
-        inv_mask2D = ~batch_mask2D
-        noise.masked_fill_(inv_mask2D, 0.0)
-        pred_noise_square.masked_fill_(inv_mask2D, 0.0)
 
         #* weight by size? bigger mols probably more effect right now
-        # loss = F.l1_loss(pred_noise_square, noise)
-        loss = F.mse_loss(pred_noise_square, noise)
+        # loss = F.l1_loss(pred_noise_square[batch_mask2D].flatten(), noise[batch_mask2D].flatten())
+        loss = F.mse_loss(pred_noise_square[batch_mask2D].flatten(), noise[batch_mask2D].flatten())
 
         return loss
         # ####################################################

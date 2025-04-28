@@ -8,6 +8,10 @@ from tqdm import tqdm
 from training.train import TrainConfig, load_model, load_quantum_dataset
 from model import mol_collate_func, construct_dataset
 
+# mean and std used to standardize training data
+MU = -0.009428045980937855
+STD = 0.5174648091010577
+
 def reconstruct_coords(distances, k: int = 3):
 
     # 1) square the distances
@@ -40,7 +44,7 @@ def reconstruct_coords(distances, k: int = 3):
     return X
 
 
-def main():
+def get_samples():
     model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-27"
     quantum_datapath = "/mnt/mntsdb/genai/10_623_final_project/dataset/quantum_features.npz"
     tags_path = os.path.join(model_dir, "testing_set.txt")
@@ -54,6 +58,11 @@ def main():
         cfg = TrainConfig(**yaml.safe_load(f))
 
     test_tags = np.loadtxt(tags_path, dtype = str)
+    test_tags = []
+    with open(tags_path, "r") as f:
+        for line in f:
+            test_tags.append(line.strip())
+
 
     noise_model = load_model(cfg.model_config)
     noise_model.to("cuda")
@@ -67,16 +76,56 @@ def main():
     diffusion_model.load_state_dict(checkpoint['model_state_dict'])  
     diffusion_model.eval().to("cuda")
 
+    # low_quality_dist_matricies = np.load(cfg.low_qual_datapath, allow_pickle = True) 
+
+
     # Sample diffusion process for molecules in test set
     samples = {}
-    for ss in tqdm(test_tags):
-        features = mol_features[ss]
-        n_at = len(features[0])
+    for ss in tqdm(test_tags[:1]):
+        feats, adj, dist = mol_features[ss]
+
         # Sample and remove padding
-        batch = mol_collate_func(construct_dataset(features, None))
-        samples[ss] = diffusion_model.sample(10, batch)[:, :n_at, :n_at]
+        #* FIX DIST MATRIX PASSED HERE TO BE LOW QUALITY??
+        batch = construct_dataset([(feats, adj, (dist - MU) / STD)], [np.empty((0,0))])
+        batch_collated = mol_collate_func(batch)
+        batch_collated = [b.to("cuda") for b in batch_collated]
+        samples[ss] = diffusion_model.sample(batch_collated).cpu().numpy()
 
     outpath = os.path.join("/mnt/mntsdb/genai/10_623_final_project/dataset/samples.npz")
     np.savez_compressed(outpath, **samples)
 
-main()
+def rmsd(x,y):
+    return np.sqrt(np.mean(np.square(x-y)))
+
+def calc_rmsd():
+
+    model_dir = "/mnt/mntsdb/genai/10_623_final_project/training/training_runs/model-2025-04-27"
+    config_path = os.path.join(model_dir, "config.yml")
+    
+    with open(config_path) as f:
+        cfg = TrainConfig(**yaml.safe_load(f))
+
+    mol_features, _ = load_quantum_dataset(cfg.quantum_datapath)
+    print("Loaded Features")
+
+
+    model_samples = np.load("/mnt/mntsdb/genai/10_623_final_project/dataset/samples.npz")
+
+    quantum_dist_matricies = {ss : mol_features[ss][-1] for ss in tqdm(mol_features)}
+
+    rmses = np.array([rmsd((model_samples[ss][0]*STD) + MU, quantum_dist_matricies[ss]) for ss in tqdm(model_samples)])
+
+    # print(np.mean(rmses))
+    # print(next(iter(model_samples.values())))
+
+    n_atoms = [len(mol_features[ss][0]) for ss in tqdm(model_samples)]
+
+    unique_counts = np.unique(n_atoms)
+
+    rmse_avg = np.array([rmses[n_atoms == na].mean() for na in unique_counts])
+    print(rmse_avg)
+
+if __name__ == "__main__":
+    get_samples()
+
+    # calc_rmsd()

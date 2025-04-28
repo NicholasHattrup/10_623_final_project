@@ -184,6 +184,9 @@ def train_one_epoch(dataloader, model, optimizer, fabric, scheduler, cfg, epoch)
             training_loss = model(delta, other_features, noise)
 
             fabric.backward(training_loss)
+
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()
             scheduler.step()
 
@@ -316,7 +319,7 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"Total Smiles in Intersection {len(smiles_strs)}")
 
     bar = tqdm(smiles_strs, desc = "Calculating Deltas", total = len(smiles_strs))
-    deltas = {ss : low_quality_dist_matricies[ss][-1] - dft_mol_features[ss][-1] for ss in bar}
+    deltas = {ss : low_quality_dist_matricies[ss] - dft_mol_features[ss][-1] for ss in bar}
 
     total_sum   = sum(v.sum()   for v in deltas.values())
     total_count = sum(v.size    for v in deltas.values())
@@ -329,10 +332,6 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
 
     deltas_standardized = {ss : (deltas[ss] - delta_mean) / delta_std for ss in bar}
 
-    #! some fake data while nick makes the correct data
-    # smiles_strs = ["CO", "CC", "CCC", "CCCC"]
-    # deltas = {ss : np.random.randn(len(ss), len(ss)) for ss in smiles_strs} #* fake distance matricies
-
     # Test-Train-Val Split
     train_smiles, val_smiles, test_smiles = split_data(list(smiles_strs), cfg.test_size, cfg.val_size, seed = 42)
     save_split(out_dir, train_smiles, val_smiles, test_smiles)
@@ -340,10 +339,13 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"There are validation clusters: {len(val_smiles)}")
     print(f"There are testing clusters: {len(test_smiles)}")
 
+    bar = tqdm(smiles_strs, desc = "Making Features for Model")
+    low_quality_features = {ss : (dft_mol_features[ss][0], dft_mol_features[ss][1], low_quality_dist_matricies[ss]) for ss in bar}
+
     # Setup data in format MAT expects
-    X_train = [dft_mol_features[ss]  for ss in train_smiles] #mol features are same for dft and low quality
-    X_val = [dft_mol_features[ss] for ss in val_smiles]
-    X_test = [dft_mol_features[ss] for ss in test_smiles]
+    X_train = [low_quality_features[ss]  for ss in train_smiles] #mol features are same for dft and low quality
+    X_val = [low_quality_features[ss] for ss in val_smiles]
+    X_test = [low_quality_features[ss] for ss in test_smiles]
     Y_train = [deltas_standardized[ss] for ss in train_smiles]
     Y_val = [deltas_standardized[ss] for ss in val_smiles]
     Y_test = [deltas_standardized[ss] for ss in test_smiles]
@@ -366,14 +368,14 @@ def train(fabric, cfg: TrainConfig, out_dir : str, padding_label = -1, max_worke
     print(f"Model has {count_parameters(diffusion_model) / 1e6 :.4f}M trainable parameters")
 
     # optimizer = torch.optim.SGD(model.parameters(), lr = cfg.lr)
-    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0, weight_decay = 1e-3)
+    optimizer = torch.optim.Adam(diffusion_model.parameters(), lr = 1.0, weight_decay = 1e-5)
     model, optimizer = fabric.setup(diffusion_model, optimizer)
 
     scheduler = TransformerLRScheduler(
         optimizer,
         model_dim=cfg.model_config.d_model, 
         warmup_steps=cfg.warmup_steps,
-        factor=150*cfg.lr
+        factor=250*cfg.lr
     )
 
     for epoch in range(cfg.n_epochs):
