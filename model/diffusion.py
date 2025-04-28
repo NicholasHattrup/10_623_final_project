@@ -115,40 +115,61 @@ class Diffusion(nn.Module):
         Computes the (t_index)th sample from the (t_index + 1)th sample using
         the reverse diffusion process.
         Args:
-            x: The sampled delta at timestep t_index + 1.
+            x: The sampled delta at timestep t_index + 1. Shape (B, N, N)
             t: 1D tensor of the index of the time step.
             t_index: Scalar of the index of the time step.
         Returns:
-            The sampled delta at timestep t_index.
+            The sampled delta at timestep t_index. Shape (B, N, N)
         """
         adjacency_matrix, node_features, distance_matrix, _ = other_features
-        distance_matrix = distance_matrix + x
+        # Ensure inputs are on the correct device before model call
+        adjacency_matrix = adjacency_matrix.to(self.device)
+        node_features = node_features.to(self.device)
+        distance_matrix = distance_matrix.to(self.device)
+        x = x.to(self.device) # Ensure x is also on the correct device
+        t = t.to(self.device) # Ensure t is on the correct device
+
+        # distance_matrix is low quality (B, N, N), x is current noise delta (B, N, N)
+        distance_matrix_noisy = distance_matrix + x 
         batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
+        batch_mask = batch_mask.to(self.device) # Ensure mask is on the correct device
         
-        ep_t = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix, None, t)
+        # Predict noise based on noisy distance matrix
+        # Ensure all inputs to the model are on self.device
+        ep_t = self.model(
+            node_features, 
+            batch_mask, 
+            adjacency_matrix, 
+            distance_matrix_noisy, 
+            None, # edges_att is None
+            t
+        ) # Shape (B, N, N)
 
-        B = ep_t.shape[0]
-        N = int(ep_t.shape[1]**0.5)
-        M = x.shape[-1] # max of batch
+        # Ensure shapes match
+        B, N, _ = x.shape
+        if ep_t.shape[-1] != N: # Check based on actual dimension size N
+             # Handle potential shape mismatch if Generator padded/sliced differently
+             ep_t = ep_t[:, :N, :N] # Slice if needed
 
-        tmp = extract(self.op_sqrt_a_bar, t, ep_t.shape)*ep_t
+        # Calculate x_hat_0 (predicted original delta)
+        # tmp = extract(self.op_sqrt_a_bar, t, ep_t.shape)*ep_t # op_sqrt_a_bar needs (B, 1, 1) shape
+        tmp = extract(self.op_sqrt_a_bar, t, x.shape) * ep_t # Use x.shape for extract
 
-        tmp_sq = tmp.view(B, N, N)[:, :M, :M]
-
-        x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) * (x - tmp_sq)
+        # inv_sqrt_a_bar needs (B, 1, 1) shape
+        x_hat_0 = extract(self.inv_sqrt_a_bar, t, x.shape) * (x - tmp)
         
-        # Remove print statements that can slow down training
-        # and potentially cause numerical instability when viewing values
+        # Clamp predicted delta
+        x_hat_0 = torch.clamp(x_hat_0, min=-10.0, max=10.0) # Adjust range if needed based on standardized delta range
         
-        # Clamp values to prevent divergence
-        x_hat_0 = torch.clamp(x_hat_0, min=-10.0, max=10.0)
-        
+        # Calculate mean of posterior q(x_{t-1} | x_t, x_0)
+        # mu_c0, mu_c1 need (B, 1, 1) shape
         mu_tilda_t = extract(self.mu_c0, t, x.shape)*x + extract(self.mu_c1, t, x.shape)*x_hat_0
 
         if t_index == 0:
             return mu_tilda_t
         else:
             z = self.noise_like(x.shape, x.device)
+            # std needs (B, 1, 1) shape
             return mu_tilda_t + extract(self.std, t, z.shape)*z
         # ####################################################
 
@@ -180,96 +201,7 @@ class Diffusion(nn.Module):
         """
         Wrapper function for p_sample_loop.
         Args:
-            batch_size: The number of images to sample.
+            other_features: Tuple containing low-quality features (adj, nodes, dist, _)
         Returns:
-            The sampled images.
+            The sampled refined distance matrix (B, N, N).
         """
-        self.model.eval()
-        distance_matrix = other_features[2]
-        noise = self.noise_like(distance_matrix.shape, self.device)
-        return self.p_sample_loop(noise, other_features) + distance_matrix
-
-    # forward diffusion
-    def q_sample(self, x_0, t, noise):
-        """
-        Applies alpha interpolation between x_0 and noise to simulate sampling
-        x_t from the noise distribution.
-        Args:
-            x_0: Batch of initial deltas between low-quality and high-quality.
-            t: 1D tensor containing a batch of time indices to sample at.
-            noise: The noise tensor to sample from.
-        Returns:
-            The sampled noisy deltas at times, t.
-        """
-        mu = extract(self.sqrt_a_bar, t, x_0.shape) * x_0        
-        x_t = mu + extract(self.op_sqrt_a_bar, t, x_0.shape) * noise
-        return x_t
-
-    def p_losses(self, x_0, other_features, t, noise):
-        """
-        Computes the loss for the forward diffusion.
-        Args:
-            x_0: (B x N x N) Batch of initial deltas between low-quality and high-quality.
-            other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
-            t: (B,) 1D tensor containing a batch of time indices to compute the loss at.
-            noise: (B x N x N) The noise tensor to use.
-        Returns:
-            The computed loss.
-        """
-        x_t = self.q_sample(x_0, t, noise)
-        adjacency_matrix, node_features, distance_matrix, _ = other_features  # Fixed unpacking to include the 4th element
-        batch_mask = torch.sum(torch.abs(node_features), dim=-1) != 0
-
-        # Nodes and Connectivity Are Unaffected By Noise
-        # Only Distance Matrix Changes with Noise
-        distance_matrix_new = distance_matrix + x_t
-
-        # Apply minimum clamping to ensure distances are physically meaningful
-        distance_matrix_new = torch.clamp(distance_matrix_new, min=1e-6)
-
-        predicted_noise = self.model(node_features, batch_mask, adjacency_matrix, distance_matrix_new, None, t)
-
-        B = predicted_noise.shape[0]
-        N = int(predicted_noise.shape[1]**0.5)
-        M = noise.shape[-1]
-        pred_noise_square = predicted_noise.view(B, N, N)[:, :M, :M]
-
-        batch_mask2D = batch_mask.unsqueeze(-1) * batch_mask.unsqueeze(-2)  # Changed | to * for proper masking
-
-        # Use a combination of MSE and L1 loss for better stability
-        mse_loss = F.mse_loss(pred_noise_square[batch_mask2D], noise[batch_mask2D])
-        l1_loss = F.l1_loss(pred_noise_square[batch_mask2D], noise[batch_mask2D])
-        loss = 0.9 * mse_loss + 0.1 * l1_loss  # Weighted combination
-        
-        # Remove debug prints in training loop
-        # Log values to wandb instead for monitoring without affecting performance
-        with torch.no_grad():
-            wandb.log({
-                "delta_mean": torch.mean(x_0).item(),
-                "delta_std": torch.std(x_0).item(),
-                "delta_min": torch.min(x_0).item(),
-                "delta_max": torch.max(x_0).item(),
-                "mask_valid_count": batch_mask2D.sum().item(),
-                "mse_loss": mse_loss.item(),
-                "l1_loss": l1_loss.item()
-            })
-
-        return loss
-        # ####################################################
-
-    def forward(self, x_0, other_features, noise):
-        """
-        Acts as a wrapper for p_losses.
-        Args:
-            x_0: (B x N x N) Batch of initial deltas between low-quality and high-quality distance matricies.
-            other_features: Batched low-quality molecule features tuple of (node_features, adj_matrix, dist_matrix)
-            noise: The noise tensor to use.
-        Returns:
-            The computed loss.
-        """
-
-        # print(f"X0 DEVICE: {x_0.device}")
-        batch_size = x_0.shape[0]
-        # print(f"X0 SHAPE: {x_0.shape}")
-        t = torch.randint(self.num_timesteps, size = (batch_size,), device = self.device)
-        return self.p_losses(x_0, other_features, t, noise)
